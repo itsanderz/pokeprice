@@ -18,48 +18,38 @@ interface Card {
   set?: { name: string; series?: string };
   images?: { small: string; large: string };
   tcgplayer?: {
-    url?: string;
     updatedAt?: string;
     prices?: Record<string, CardPrice>;
   };
   cardmarket?: {
-    url?: string;
     prices?: Record<string, number>;
   };
 }
 
-function getMarketPrice(card: Card): number | null {
-  const prices = card.tcgplayer?.prices;
-  if (!prices) return null;
-  for (const variant of ["holofoil", "reverseHolofoil", "normal", "1stEditionHolofoil"]) {
-    if (prices[variant]?.market) return prices[variant].market!;
+function getPrice(card: Card): number | null {
+  const p = card.tcgplayer?.prices;
+  if (!p) return null;
+  for (const v of ["holofoil", "reverseHolofoil", "normal", "1stEditionHolofoil"]) {
+    if (p[v]?.market) return p[v].market!;
   }
-  for (const p of Object.values(prices)) {
-    if (p?.market) return p.market;
+  for (const v of Object.values(p)) {
+    if (v?.market) return v.market;
   }
   return null;
 }
 
-function formatVariant(name: string): string {
-  const map: Record<string, string> = {
-    normal: "Normal",
-    holofoil: "Holo",
-    reverseHolofoil: "Rev Holo",
-    "1stEditionHolofoil": "1st Ed Holo",
-    unlimitedHolofoil: "Unlimited",
-    "1stEdition": "1st Edition",
-    unlimited: "Unlimited",
-  };
-  return map[name] || name.replace(/([A-Z])/g, " $1").trim();
+function getVariants(card: Card): [string, CardPrice][] {
+  const p = card.tcgplayer?.prices;
+  if (!p) return [];
+  return Object.entries(p).filter(([, v]) => v.market != null) as [string, CardPrice][];
 }
 
-function getVariants(card: Card): [string, CardPrice][] {
-  const prices = card.tcgplayer?.prices;
-  if (!prices) return [];
-  return Object.entries(prices).filter(([, p]) => p.market != null) as [
-    string,
-    CardPrice
-  ][];
+function formatVariant(name: string): string {
+  const m: Record<string, string> = {
+    normal: "Normal", holofoil: "Holo", reverseHolofoil: "Reverse Holo",
+    "1stEditionHolofoil": "1st Ed Holo", unlimitedHolofoil: "Unlimited",
+  };
+  return m[name] || name.replace(/([A-Z])/g, " $1").trim();
 }
 
 export default function Home() {
@@ -68,290 +58,322 @@ export default function Home() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<Card | null>(null);
-  const [activeVariant, setActiveVariant] = useState<string>("");
+  const [activeVariant, setActiveVariant] = useState("");
   const debounce = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const search = useCallback(async (q: string) => {
-    if (q.length < 2) {
-      setCards([]);
-      setTotal(0);
-      setSelected(null);
-      return;
-    }
+    if (q.length < 2) { setCards([]); setTotal(0); return; }
     setLoading(true);
-    setSelected(null);
     try {
-      const resp = await fetch(`/api/cards?q=${encodeURIComponent(q)}&limit=12`);
+      const resp = await fetch(`/api/cards?q=${encodeURIComponent(q)}&limit=20`);
       const data = await resp.json();
       setCards(data.data || []);
       setTotal(data.totalCount || 0);
-    } catch {
-      setCards([]);
-    }
+    } catch { setCards([]); }
     setLoading(false);
   }, []);
 
   useEffect(() => {
     clearTimeout(debounce.current);
-    debounce.current = setTimeout(() => search(query), 250);
+    debounce.current = setTimeout(() => search(query), 300);
     return () => clearTimeout(debounce.current);
   }, [query, search]);
 
-  const selectCard = async (id: string) => {
+  const loadDetail = async (id: string) => {
     try {
       const resp = await fetch(`/api/cards/${id}`);
-      const data = await resp.json();
-      const card = data.data as Card;
+      const card = ((await resp.json()).data) as Card;
       setSelected(card);
       const variants = getVariants(card);
-      if (variants.length > 0) setActiveVariant(variants[0][0]);
-    } catch {
-      /* ignore */
-    }
+      setActiveVariant(variants[0]?.[0] || "");
+    } catch { /* ignore */ }
   };
 
-  const selectedPrices = selected?.tcgplayer?.prices?.[activeVariant];
-  const cmPrices = selected?.cardmarket?.prices;
+  const prices = selected?.tcgplayer?.prices?.[activeVariant];
+  const cm = selected?.cardmarket?.prices;
+  const market = prices?.market;
+  const low = prices?.low;
+  const high = prices?.high;
+  const variants = selected ? getVariants(selected) : [];
+  const updated = selected?.tcgplayer?.updatedAt;
+  const cmAvg30 = cm?.avg30;
+  const cmAvg7 = cm?.avg7;
+  const trend =
+    cmAvg30 && cmAvg7 ? ((cmAvg7 - cmAvg30) / cmAvg30) * 100 : null;
+  const rangePercent =
+    low && high && market && high > low
+      ? ((market - low) / (high - low)) * 100
+      : 50;
 
   return (
-    <div className="min-h-screen bg-[#0d0d0e] text-[#fafafa] font-sans">
-      <div className="max-w-2xl mx-auto px-4 py-6">
-        {/* Header */}
-        <header className="flex items-center justify-between pb-5 mb-5 border-b border-[#27272a]">
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-500 flex items-center justify-center text-lg">
-              ⚡
-            </div>
-            <h1 className="text-lg font-bold tracking-tight">
-              Poke<span className="text-violet-400">Price</span>
-            </h1>
+    <div className="flex min-h-screen bg-[#f8f9fa] text-[#212529] max-w-[1440px] mx-auto">
+      {/* Sidebar */}
+      <aside className="w-[340px] bg-white border-r border-[#e9ecef] flex flex-col shrink-0 max-md:w-full max-md:border-r-0 max-md:border-b max-md:h-auto max-md:sticky max-md:top-0 max-md:z-10">
+        {/* Logo */}
+        <div className="flex items-center gap-2.5 px-6 py-5 border-b border-[#e9ecef]">
+          <div className="w-9 h-9 rounded-md bg-[#4263eb] flex items-center justify-center text-lg text-white">
+            ⚡
           </div>
-          <span className="text-[11px] px-2 py-1 rounded-full bg-violet-500/15 text-violet-400 font-semibold tracking-wide">
-            BETA
-          </span>
-        </header>
-
-        {/* Search */}
-        <div className="relative mb-6">
-          <input
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search any Pokémon card…"
-            className="w-full bg-[#1a1a1e] border border-[#27272a] rounded-xl px-4 py-3.5 text-base text-[#fafafa] outline-none transition-all focus:border-violet-500 focus:ring-[3px] focus:ring-violet-500/15 placeholder:text-[#71717a]"
-            autoFocus
-          />
-          {loading && (
-            <div className="absolute right-4 top-1/2 -translate-y-1/2">
-              <div className="w-5 h-5 border-2 border-[#27272a] border-t-violet-500 rounded-full animate-spin" />
-            </div>
-          )}
+          <h1 className="text-lg font-bold tracking-tight">
+            Poke<span className="text-[#4263eb]">Price</span>
+          </h1>
         </div>
 
-        {/* Results */}
-        {!query && (
-          <div className="text-center py-20 text-[#71717a]">
-            <div className="text-5xl mb-3 opacity-50">🔍</div>
-            <h3 className="text-base text-[#a1a1aa] mb-1">Search a Pokémon card</h3>
-            <p className="text-[13px] max-w-xs mx-auto">
-              Type a card name above to see real-time prices from TCGPlayer &amp; Cardmarket
-            </p>
-          </div>
-        )}
-
-        {query && !loading && cards.length === 0 && (
-          <div className="text-center py-20 text-[#71717a]">
-            <div className="text-5xl mb-3 opacity-50">😕</div>
-            <h3 className="text-base text-[#a1a1aa] mb-1">No cards found</h3>
-            <p className="text-[13px] max-w-xs mx-auto">
-              Try a different search like &ldquo;Charizard&rdquo; or &ldquo;Pikachu&rdquo;
-            </p>
-          </div>
-        )}
-
-        {cards.length > 0 && (
-          <>
-            <div className="flex justify-between items-center mb-3">
-              <span className="text-[13px] text-[#a1a1aa] font-medium">
-                {total} cards found
-              </span>
-            </div>
-            <div className="flex flex-col gap-2">
-              {cards.map((card) => {
-                const marketPrice = getMarketPrice(card);
-                return (
-                  <button
-                    key={card.id}
-                    onClick={() => selectCard(card.id)}
-                    className={`flex items-center gap-3.5 p-3 bg-[#1a1a1e] border rounded-xl cursor-pointer transition-all text-left hover:bg-[#222226] hover:border-[#3b3b40] hover:translate-x-0.5 ${
-                      selected?.id === card.id
-                        ? "border-violet-500 bg-violet-500/5"
-                        : "border-[#27272a]"
-                    }`}
-                  >
-                    {card.images?.small ? (
-                      <img
-                        src={card.images.small}
-                        alt={card.name}
-                        className="w-12 h-[66px] rounded object-contain bg-white/[0.03] shrink-0"
-                        loading="lazy"
-                      />
-                    ) : (
-                      <div className="w-12 h-[66px] rounded bg-white/[0.03] shrink-0" />
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-semibold tracking-tight">{card.name}</div>
-                      <div className="text-xs text-[#a1a1aa] mt-0.5">
-                        {card.set?.name || "Unknown Set"}
-                      </div>
-                      <div className="text-[11px] text-[#71717a] font-mono">
-                        #{card.number || "?"} · {card.rarity || "?"}
-                      </div>
-                    </div>
-                    <div className="text-right shrink-0">
-                      <div className="text-base font-bold font-mono">
-                        {marketPrice ? `$${marketPrice.toFixed(2)}` : "—"}
-                      </div>
-                      <div className="text-[10px] text-[#71717a] uppercase tracking-wider">
-                        Market
-                      </div>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </>
-        )}
-
-        {/* Detail panel */}
-        {selected && (
-          <div className="mt-2 bg-[#1a1a1e] border border-[#27272a] rounded-xl p-6 animate-[slideDown_0.2s_ease]">
-            {/* Card header */}
-            <div className="flex gap-5 mb-6 items-start max-sm:flex-col max-sm:items-center max-sm:text-center">
-              {selected.images?.large && (
-                <img
-                  src={selected.images.large}
-                  alt={selected.name}
-                  className="w-[140px] rounded-lg shadow-xl max-sm:w-[180px]"
-                />
-              )}
-              <div>
-                <h2 className="text-[22px] font-bold tracking-tight">{selected.name}</h2>
-                <p className="text-sm text-[#a1a1aa] mt-0.5">
-                  {selected.set?.name || "Unknown Set"} · #{selected.number || "?"}
-                </p>
-                <span className="inline-block text-xs mt-1.5 px-2.5 py-0.5 bg-violet-500/15 text-violet-400 rounded-full font-semibold">
-                  {selected.rarity || "Unknown"}
-                </span>
-              </div>
-            </div>
-
-            {/* Variant tabs */}
-            {getVariants(selected).length > 1 && (
-              <div className="flex gap-1.5 mb-4 flex-wrap">
-                {getVariants(selected).map(([name]) => (
-                  <button
-                    key={name}
-                    onClick={() => setActiveVariant(name)}
-                    className={`px-3 py-1.5 rounded-full text-[11px] font-semibold transition-all ${
-                      activeVariant === name
-                        ? "bg-violet-500 text-white"
-                        : "bg-[#141416] border border-[#27272a] text-[#a1a1aa] hover:bg-[#222226] hover:text-[#fafafa]"
-                    }`}
-                  >
-                    {formatVariant(name)}
-                  </button>
-                ))}
+        {/* Search */}
+        <div className="p-4">
+          <div className="relative">
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search any Pokémon card…"
+              className="w-full py-2.5 px-3.5 border-[1.5px] border-[#dee2e6] rounded-md text-sm bg-[#f8f9fa] outline-none transition-all focus:border-[#4263eb] focus:ring-[3px] focus:ring-[#dbe4ff] placeholder:text-[#adb5bd]"
+              autoFocus
+            />
+            {loading && (
+              <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                <div className="w-4 h-4 border-2 border-[#e9ecef] border-t-[#4263eb] rounded-full animate-spin" />
               </div>
             )}
+          </div>
+        </div>
 
-            {/* Pricing grid */}
-            <div className="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-3 max-sm:grid-cols-1">
-              {/* TCGPlayer */}
-              <div className="bg-[#141416] border border-[#27272a] rounded-lg p-4">
-                <h3 className="text-[11px] uppercase tracking-[0.8px] text-[#71717a] font-semibold mb-2">
-                  📊 TCGPlayer
-                </h3>
-                <div className="text-2xl font-bold font-mono tracking-tight text-green-500">
-                  {selectedPrices?.market
-                    ? `$${selectedPrices.market.toFixed(2)}`
-                    : "—"}
+        {/* Card list */}
+        <div className="flex-1 overflow-y-auto px-2">
+          {!query && (
+            <p className="text-center text-[13px] text-[#adb5bd] py-8">Type a card name to search</p>
+          )}
+          {query && !loading && cards.length === 0 && (
+            <p className="text-center text-[13px] text-[#adb5bd] py-8">No cards found</p>
+          )}
+          {cards.map((card) => {
+            const price = getPrice(card);
+            return (
+              <button
+                key={card.id}
+                onClick={() => loadDetail(card.id)}
+                className={`flex items-center gap-2.5 w-full p-2.5 rounded-md text-left transition-colors border border-transparent hover:bg-[#f1f3f5] ${
+                  selected?.id === card.id ? "bg-[#dbe4ff] border-[#4263eb]" : ""
+                }`}
+              >
+                {card.images?.small ? (
+                  <img src={card.images.small} alt="" className="w-11 h-[60px] rounded object-contain bg-[#f8f9fa] shrink-0" loading="lazy" />
+                ) : (
+                  <div className="w-11 h-[60px] rounded bg-[#f8f9fa] shrink-0" />
+                )}
+                <div className="flex-1 min-w-0">
+                  <div className="text-[13px] font-semibold leading-tight truncate">{card.name}</div>
+                  <div className="text-[11px] text-[#6c757d] truncate">
+                    {card.set?.name} #{card.number || "?"}
+                  </div>
                 </div>
-                {selectedPrices && (
-                  <div className="mt-2.5 flex flex-col gap-1">
-                    <Row label="Market" value={selectedPrices.market} prefix="$" />
-                    <Row label="Low" value={selectedPrices.low} prefix="$" />
-                    <Row label="Mid" value={selectedPrices.mid} prefix="$" />
-                    <Row label="High" value={selectedPrices.high} prefix="$" />
-                    <Row label="Direct Low" value={selectedPrices.directLow} prefix="$" />
+                <div className="text-sm font-bold whitespace-nowrap shrink-0">
+                  {price ? `$${price.toFixed(2)}` : "—"}
+                </div>
+              </button>
+            );
+          })}
+          {cards.length > 0 && (
+            <p className="text-[11px] text-[#adb5bd] px-2.5 py-2">{total} results</p>
+          )}
+        </div>
+      </aside>
+
+      {/* Main Content */}
+      <main className="flex-1 p-8 max-md:p-4 overflow-y-auto">
+        {!selected ? (
+          <div className="flex flex-col items-center justify-center h-[60vh] text-center text-[#6c757d]">
+            <div className="text-6xl mb-4 opacity-60">🔍</div>
+            <h2 className="text-lg font-semibold text-[#212529] mb-1">Pokémon Card Price Comparison</h2>
+            <p className="text-sm max-w-xs">
+              Search for a card to see real-time prices from TCGPlayer and Cardmarket side by side.
+            </p>
+          </div>
+        ) : (
+          <>
+            {/* Detail Header */}
+            <div className="flex gap-7 mb-8 items-start max-md:flex-col max-md:items-center max-md:text-center">
+              {selected.images?.large && (
+                <img src={selected.images.large} alt={selected.name} className="w-[200px] rounded-xl shadow-lg shrink-0 max-md:w-40" />
+              )}
+              <div>
+                <h1 className="text-[28px] font-bold tracking-tight mb-1 max-md:text-2xl">{selected.name}</h1>
+                <p className="text-sm text-[#6c757d] mb-2.5">
+                  {selected.set?.name || "Unknown Set"} · #{selected.number || "?"}
+                </p>
+                <div className="flex gap-1.5 flex-wrap mb-4 max-md:justify-center">
+                  <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-[#dbe4ff] text-[#4263eb]">
+                    {selected.rarity || "Unknown"}
+                  </span>
+                  {selected.set?.series && (
+                    <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-[#fffbeb] text-[#b45309]">
+                      {selected.set.series}
+                    </span>
+                  )}
+                  {updated && (
+                    <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-[#f0fdf4] text-[#15803d]">
+                      Updated {updated}
+                    </span>
+                  )}
+                </div>
+                {variants.length > 1 && (
+                  <div className="flex gap-1 flex-wrap max-md:justify-center">
+                    {variants.map(([name]) => (
+                      <button
+                        key={name}
+                        onClick={() => setActiveVariant(name)}
+                        className={`text-xs font-medium px-3 py-1 rounded-full border transition-colors ${
+                          activeVariant === name
+                            ? "bg-[#4263eb] text-white border-[#4263eb]"
+                            : "bg-white border-[#dee2e6] text-[#6c757d] hover:bg-[#f1f3f5] hover:text-[#212529]"
+                        }`}
+                      >
+                        {formatVariant(name)}
+                      </button>
+                    ))}
                   </div>
                 )}
+              </div>
+            </div>
+
+            {/* Price Cards */}
+            <div className="grid grid-cols-3 gap-4 mb-8 max-md:grid-cols-1">
+              {/* TCGPlayer */}
+              <div className="bg-white border border-[#e9ecef] rounded-xl p-5 shadow-sm">
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="w-7 h-7 rounded-md bg-[#22c55e] flex items-center justify-center text-xs font-bold text-white">T</div>
+                  <span className="text-[11px] font-semibold text-[#6c757d] uppercase tracking-wide">TCGPlayer</span>
+                </div>
+                <div className="text-[32px] font-bold tracking-tight text-[#15803d] mb-1">
+                  {market ? `$${market.toFixed(2)}` : "—"}
+                </div>
+                <p className="text-xs text-[#adb5bd]">Market Price</p>
+                <div className="mt-3 flex flex-col gap-1.5">
+                  <div className="flex justify-between text-[13px]">
+                    <span className="text-[#6c757d]">Low</span>
+                    <span className="font-semibold">{low ? `$${low.toFixed(2)}` : "—"}</span>
+                  </div>
+                  <div className="h-1.5 bg-[#e9ecef] rounded-full relative overflow-hidden">
+                    <div className="h-full rounded-full absolute bg-gradient-to-r from-[#86efac] via-[#22c55e] to-[#16a34a]" style={{ width: "100%" }} />
+                    <div
+                      className="absolute -top-0.5 w-3 h-3 rounded-full border-2 border-white bg-[#4263eb] shadow-sm"
+                      style={{ left: `${rangePercent}%`, transform: "translateX(-50%)" }}
+                    />
+                  </div>
+                  <div className="flex justify-between text-[13px]">
+                    <span className="text-[#6c757d]">High</span>
+                    <span className="font-semibold">{high ? `$${high.toFixed(2)}` : "—"}</span>
+                  </div>
+                </div>
               </div>
 
               {/* Cardmarket */}
-              <div className="bg-[#141416] border border-[#27272a] rounded-lg p-4">
-                <h3 className="text-[11px] uppercase tracking-[0.8px] text-[#71717a] font-semibold mb-2">
-                  🇪🇺 Cardmarket
-                </h3>
-                <div className="text-2xl font-bold font-mono tracking-tight text-blue-400">
-                  {cmPrices?.trendPrice
-                    ? `€${cmPrices.trendPrice.toFixed(2)}`
-                    : "—"}
+              <div className="bg-white border border-[#e9ecef] rounded-xl p-5 shadow-sm">
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="w-7 h-7 rounded-md bg-[#3b82f6] flex items-center justify-center text-xs font-bold text-white">C</div>
+                  <span className="text-[11px] font-semibold text-[#6c757d] uppercase tracking-wide">Cardmarket</span>
                 </div>
-                {cmPrices?.trendPrice && (
-                  <div className="mt-2.5 flex flex-col gap-1">
-                    <Row label="Trend" value={cmPrices.trendPrice} prefix="€" />
-                    <Row label="1-Day Avg" value={cmPrices.avg1} prefix="€" />
-                    <Row label="7-Day Avg" value={cmPrices.avg7} prefix="€" />
-                    <Row label="30-Day Avg" value={cmPrices.avg30} prefix="€" />
-                    <Row label="Low" value={cmPrices.lowPrice} prefix="€" />
+                <div className="text-[32px] font-bold tracking-tight text-[#1d4ed8] mb-1">
+                  {cm?.trendPrice ? `€${cm.trendPrice.toFixed(2)}` : "—"}
+                </div>
+                <p className="text-xs text-[#adb5bd]">Trend Price</p>
+                <div className="mt-3 flex flex-col gap-1">
+                  <div className="flex justify-between text-[13px]">
+                    <span className="text-[#6c757d]">30-Day Avg</span>
+                    <span className="font-semibold">{cmAvg30 ? `€${cmAvg30.toFixed(2)}` : "—"}</span>
                   </div>
-                )}
+                  <div className="flex justify-between text-[13px]">
+                    <span className="text-[#6c757d]">7-Day Avg</span>
+                    <span className="font-semibold">{cmAvg7 ? `€${cmAvg7.toFixed(2)}` : "—"}</span>
+                  </div>
+                  <div className="flex justify-between text-[13px]">
+                    <span className="text-[#6c757d]">1-Day Avg</span>
+                    <span className="font-semibold">{cm?.avg1 ? `€${cm.avg1.toFixed(2)}` : "—"}</span>
+                  </div>
+                </div>
               </div>
 
               {/* Fair Price */}
-              <div className="bg-[#141416] border border-[#27272a] rounded-lg p-4">
-                <h3 className="text-[11px] uppercase tracking-[0.8px] text-[#71717a] font-semibold mb-2">
-                  💰 Fair Price
-                </h3>
-                <div className="text-2xl font-bold font-mono tracking-tight text-violet-400">
-                  {selectedPrices?.market
-                    ? `$${selectedPrices.market.toFixed(2)}`
-                    : "—"}
+              <div className="bg-[#f5f3ff] border border-[#e9d5ff] rounded-xl p-5 shadow-sm">
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="w-7 h-7 rounded-md bg-[#8b5cf6] flex items-center justify-center text-xs font-bold text-white">F</div>
+                  <span className="text-[11px] font-semibold text-[#6c757d] uppercase tracking-wide">Fair Price</span>
                 </div>
-                <p className="text-[11px] text-[#71717a] mt-2">
-                  Weighted blend of all sources
+                <div className="text-[32px] font-bold tracking-tight text-[#6d28d9] mb-1">
+                  {market ? `$${market.toFixed(2)}` : "—"}
+                </div>
+                <p className="text-xs text-[#adb5bd]">Weighted blend of all sources</p>
+                <p className="mt-3 text-xs text-[#6c757d]">
+                  {market && cm?.trendPrice
+                    ? "Based on TCGPlayer market + Cardmarket trend"
+                    : "Based on available market data"}
                 </p>
               </div>
             </div>
 
-            {selected.tcgplayer?.updatedAt && (
-              <p className="text-[11px] text-[#71717a] mt-4 text-right">
-                Prices updated: {selected.tcgplayer.updatedAt}
-              </p>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
+            {/* Stats */}
+            <div className="grid grid-cols-3 gap-4 mb-8 max-md:grid-cols-1">
+              <div className="bg-white border border-[#e9ecef] rounded-xl p-4">
+                <div className="text-[11px] font-semibold text-[#adb5bd] uppercase tracking-wide mb-1">Mid Price</div>
+                <div className="text-lg font-bold">{prices?.mid ? `$${prices.mid.toFixed(2)}` : "—"}</div>
+                <div className="text-xs text-[#6c757d] mt-0.5">TCGPlayer mid-range</div>
+              </div>
+              <div className="bg-white border border-[#e9ecef] rounded-xl p-4">
+                <div className="text-[11px] font-semibold text-[#adb5bd] uppercase tracking-wide mb-1">30-Day Trend</div>
+                <div className={`text-lg font-bold ${trend != null ? (trend > 0 ? "text-[#15803d]" : "text-[#e03131]") : ""}`}>
+                  {trend != null ? `${trend > 0 ? "↑" : "↓"} ${Math.abs(trend).toFixed(1)}%` : "—"}
+                </div>
+                <div className="text-xs text-[#6c757d] mt-0.5">Cardmarket avg change</div>
+              </div>
+              <div className="bg-white border border-[#e9ecef] rounded-xl p-4">
+                <div className="text-[11px] font-semibold text-[#adb5bd] uppercase tracking-wide mb-1">Price Range</div>
+                <div className="text-lg font-bold">
+                  {low && high ? `$${low.toFixed(2)} – $${high.toFixed(2)}` : "—"}
+                </div>
+                <div className="text-xs text-[#6c757d] mt-0.5">Low to high spread</div>
+              </div>
+            </div>
 
-function Row({
-  label,
-  value,
-  prefix,
-}: {
-  label: string;
-  value: number | null;
-  prefix: string;
-}) {
-  return (
-    <div className="flex justify-between text-xs">
-      <span className="text-[#71717a]">{label}</span>
-      <span className="text-[#a1a1aa] font-mono text-[11px]">
-        {value != null ? `${prefix}${value.toFixed(2)}` : "—"}
-      </span>
+            {/* Detailed Table */}
+            <h3 className="text-sm font-semibold text-[#6c757d] uppercase tracking-wide mb-3">Detailed Price Breakdown</h3>
+            <div className="bg-white border border-[#e9ecef] rounded-xl overflow-hidden mb-4">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-[#f8f9fa] border-b border-[#e9ecef]">
+                    <th className="text-left py-2.5 px-4 text-[11px] font-semibold text-[#adb5bd] uppercase tracking-wide">Source</th>
+                    <th className="text-left py-2.5 px-4 text-[11px] font-semibold text-[#adb5bd] uppercase tracking-wide">Market</th>
+                    <th className="text-left py-2.5 px-4 text-[11px] font-semibold text-[#adb5bd] uppercase tracking-wide">Low</th>
+                    <th className="text-left py-2.5 px-4 text-[11px] font-semibold text-[#adb5bd] uppercase tracking-wide">Mid</th>
+                    <th className="text-left py-2.5 px-4 text-[11px] font-semibold text-[#adb5bd] uppercase tracking-wide">High</th>
+                    <th className="text-left py-2.5 px-4 text-[11px] font-semibold text-[#adb5bd] uppercase tracking-wide">Direct</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr className="border-b border-[#e9ecef] last:border-0">
+                    <td className="py-2.5 px-4 font-semibold">TCGPlayer</td>
+                    <td className="py-2.5 px-4 font-bold text-[#4263eb]">{market ? `$${market.toFixed(2)}` : "—"}</td>
+                    <td className="py-2.5 px-4">{low ? `$${low.toFixed(2)}` : "—"}</td>
+                    <td className="py-2.5 px-4">{prices?.mid ? `$${prices.mid.toFixed(2)}` : "—"}</td>
+                    <td className="py-2.5 px-4">{high ? `$${high.toFixed(2)}` : "—"}</td>
+                    <td className="py-2.5 px-4">{prices?.directLow ? `$${prices.directLow.toFixed(2)}` : "—"}</td>
+                  </tr>
+                  {cm?.trendPrice && (
+                    <tr>
+                      <td className="py-2.5 px-4 font-semibold">Cardmarket</td>
+                      <td className="py-2.5 px-4 font-bold text-[#4263eb]">€{cm.trendPrice.toFixed(2)}</td>
+                      <td className="py-2.5 px-4">€{(cm.lowPrice || 0).toFixed(2)}</td>
+                      <td className="py-2.5 px-4">—</td>
+                      <td className="py-2.5 px-4">—</td>
+                      <td className="py-2.5 px-4">—</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            {updated && <p className="text-right text-[11px] text-[#adb5bd]">Prices updated: {updated}</p>}
+          </>
+        )}
+      </main>
     </div>
   );
 }
