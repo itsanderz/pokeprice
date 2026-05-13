@@ -1037,4 +1037,224 @@ Utilities can be copied. Protectors earn loyalty. Communities are irreplaceable.
 
 ---
 
+## Phase 4: Implementation Log (May 13, 2026)
+
+**Objective:** Execute the trust-first product roadmap derived from Phases 1–3. All features were validated against verbatim research claims before implementation.
+
+**Build Status:** ✅ Production build passes (Next.js 16.2.6 + Turbopack). Deployed to `https://github.com/itsanderz/pokeprice`.
+
+---
+
+### 24. Pricing Trust Fixes (Core Pain Point #1)
+
+**Research Claim:** *"Never trust the app price. Check eBay sold and then subtract 15% for fees."* / *"Collectr says $500, I can't sell for $350."*
+
+**Implemented:**
+- **Realizable Price Calculation:** `getRealizablePrice(market)` applies 13% fee deduction (eBay ~12.9% + payment processing ~0.3%). Displayed on every card detail page as "You'll Get ≈" alongside Market Price.
+- **Three-Vector Pricing Display:**
+  1. **Market Price** (TCGPlayer — what apps show)
+  2. **eBay Sold Average** (estimated at 92% of TCGPlayer market for raw cards; labeled "estimated" until real eBay API connected)
+  3. **Realizable Price** (consensus minus ~13% fees)
+- **PriceDashboard Component:** Side-by-side comparison of TCGPlayer, eBay Sold, Cardmarket with visual comparison bar and confidence scoring.
+- **Consensus Calculation:** Mean of all available USD-equivalent sources (TCGPlayer Market, Cardmarket trend/avg7 converted at 1.08 EUR/USD, eBay Sold estimate).
+- **Confidence Scoring:** `high` / `medium` / `low` based on source agreement. Flags large discrepancies with "verify before buying" warnings.
+
+**Files:** `src/lib/pricing.ts`, `src/lib/marketplace.ts`, `src/app/components/PriceDashboard.tsx`, `src/app/page.tsx` (DetailView)
+
+---
+
+### 25. Cost Basis + True ROI (Core Pain Point #2)
+
+**Research Claim:** *"I bought 50 PSA 10s at $40 each, now they're $200. What's my return?"*
+
+**Implemented:**
+- **CollectionItem Extended Type:** Added `costBasis?: number` and `condition?: "NM" | "LP" | "MP" | "HP" | "Damaged"`
+- **Portfolio Dashboard:** Shows Adjusted Value, Invested, True ROI, Cards Owned, Unique Cards
+- **Per-Card ROI:** Inline display on every collection card. Green `+47%` or red `-12%` when cost basis is set
+- **Inline Edit Controls:** Hover any collection card → condition dropdown + cost basis input. No navigation required.
+- **localStorage Migration:** Graceful v1 → v2 migration. Old collections default to `condition: "NM"`, `costBasis: 0`
+
+**Condition Multipliers (Community-Standard):**
+| Condition | Multiplier | Rationale |
+|-----------|------------|-----------|
+| NM | 100% | Full price |
+| LP | 80% | Binder copies sell at discount |
+| MP | 50% | Moderate play visible |
+| HP | 30% | Heavy play, edge wear |
+| Damaged | 10% | Creases, water damage |
+
+**Files:** `src/app/page.tsx` (CollectionView, types, utilities)
+
+---
+
+### 26. Synthetic Sparklines Killed (Core Pain Point #3)
+
+**Research Finding:** Users deeply distrust apps that show fake/synthetic price charts.
+
+**Implemented:**
+- `generateSparkline()` now returns `{ data: number[]; hasRealData: boolean }`
+- **No more `Math.random()` fill.** If fewer than 3 real data points exist from APIs, returns `hasRealData: false`
+- `Sparkline` component displays `"Insufficient data"` text instead of fabricating a trend line
+- Applied consistently in both `CardGridItem` and `DetailView`
+
+**Files:** `src/app/page.tsx` (generateSparkline), `src/app/components/Sparkline.tsx`
+
+---
+
+### 27. Condition-Adjusted Pricing (Core Pain Point #4)
+
+**Research Claim:** *"A NM Base Charizard and a PSA 2 should not share a price."*
+
+**Implemented:**
+- `getConditionAdjustedPrice(marketPrice, condition)` applies multipliers server-side and client-side
+- Collection cards show condition badge with color coding (NM=emerald, LP=yellow, MP=orange, HP=rose, Damaged=slate)
+- Badge shows percentage multiplier when not NM (e.g., `50%`)
+- All collection totals (Adjusted Value, Invested, ROI) use condition-adjusted prices
+
+**Files:** `src/app/page.tsx` (getConditionAdjustedPrice, CollectionView)
+
+---
+
+### 28. CSV Export (Data Portability — High Emotional Weight)
+
+**Research Claim:** Users deeply value control over their own data. "I track my sealed in a Google Sheet. It's embarrassing that no app does this."
+
+**Implemented:**
+- `exportCollectionToCsv()` generates full portfolio export with 13 columns:
+  - Name, Set, Number, Rarity, Quantity, Condition, Condition Multiplier
+  - Market Price, Adjusted Price, Cost Basis, Invested, ROI %
+  - eBay Sold Avg (estimated)
+- **Export CSV button** in CollectionView header, always free
+- Filename: `pokeprice-collection-YYYY-MM-DD.csv`
+
+**Files:** `src/app/page.tsx` (exportCollectionToCsv, downloadCsv)
+
+---
+
+### 29. Sealed Vault MVP (Major Greenfield Opportunity)
+
+**Research Gap:** *"Zero major competitors support sealed tracking."* / *"I forgot I had 10 Champion's Path ETBs in my attic."*
+
+**Implemented:**
+- **SealedItem Type:** name, set, format, qty, costBasis, estValue, storageLocation, purchaseDate, notes
+- **Full CRUD UI:** Add product form with all fields → Grid display with inline edits → Remove with confirmation
+- **Portfolio Summary:** Total Cost, Est. Value, Unrealized P/L, Product count
+- **Searchable:** Fuse.js fuzzy search across name, set, format, storageLocation, notes
+- **Formats Supported:** Booster Box, ETB, Blister, Tin, Collection Box, Other
+- **Inline Updates:** Edit estimated value and storage location directly on card hover
+- **Sidebar Integration:** Nav badge shows product count; summary panel shows totals
+
+**Files:** `src/app/page.tsx` (SealedVaultView, SealedItem type, state, localStorage)
+
+---
+
+### 30. Fuzzy Search (Fuse.js v7.3.0)
+
+**Research Need:** Users search with typos, partial set names, and rarity filters.
+
+**Implemented:**
+
+**Server-Side (API Routes):**
+- `src/lib/search.ts` — search engine with cross-field scoring
+- `/api/cards` fetches **4× the requested limit** from upstream, then `rankByRelevance()` scores all candidates
+- **Field Weights:** name (45%), set.name (25%), set.series (15%), rarity (10%), number (5%)
+- **Threshold:** 0.40 — catches "charzard" → "Charizard" without noise
+- **Extended Search:** Supports exact-match and prefix operators
+
+**Client-Side (All Views):**
+| View | Searchable Fields | Notes |
+|------|------------------|-------|
+| Watchlist | name, setName, number, rarity | Real-time filter with result count |
+| Collection | name, setName, number, rarity, condition | Metrics update to filtered subset |
+| Sealed Vault | name, set, format, storageLocation, notes | Finds "ETB" or "closet" instantly |
+
+**UX:** Search input in every view header. Empty state shows "No matches" when query yields nothing. Clears instantly when input is emptied.
+
+**Files:** `src/lib/search.ts`, `src/app/api/cards/route.ts`, `src/app/page.tsx` (WatchlistView, CollectionView, SealedVaultView)
+
+---
+
+### 31. API Robustness & Marketplace Connections
+
+**Before:** Simple `fetch()` with no error handling.
+**After:**
+
+| Feature | Implementation |
+|---------|----------------|
+| **Timeout** | AbortController, 10s default |
+| **Retry** | 2 retries with exponential backoff (500ms base) |
+| **Error Structuring** | `{ data, ok, status, source, error }` |
+| **Graceful Degradation** | If one source fails, others still return |
+| **User-Agent** | `pokeprice/1.0` on all requests |
+
+**Marketplace Connection Status:**
+| Source | Status | Data Flow |
+|--------|--------|-----------|
+| **TCGPlayer** | ✅ Live | Via pokemontcg.io API |
+| **Cardmarket** | ✅ Live | Via pokemontcg.io API (EUR → USD at 1.08) |
+| **eBay Sold** | ⚡ Estimated | `estimateEbaySoldAvg()` = 92% of TCGPlayer market. Real API stubbed in `src/lib/marketplace.ts` |
+| **PriceCharting** | 🔌 Stubbed | Architecture ready in `buildUnifiedPrices()` |
+| **PSA/CGC Pop** | 🔌 Stubbed | Architecture ready |
+
+**Files:** `src/lib/marketplace.ts`, `src/lib/pricing.ts`, `src/app/api/cards/route.ts`, `src/app/api/cards/[id]/route.ts`
+
+---
+
+### 32. Build Verification
+
+```
+▲ Next.js 16.2.6 (Turbopack)
+  Creating an optimized production build ...
+✓ Compiled successfully in 2.1s
+  Running TypeScript ...
+  Finished TypeScript in 2.3s ...
+✓ Generating static pages using 7 workers (5/5) in 496ms
+```
+
+**Commit:** `66fd920` — "v4: Production-ready pricing terminal"  
+**Files Changed:** 15 files, +3,749 lines, -227 lines  
+**Remote:** `https://github.com/itsanderz/pokeprice.git`
+
+---
+
+### 33. What's Live Now vs. Roadmap
+
+| Roadmap Item | Status | Notes |
+|--------------|--------|-------|
+| Realizable Price Display | ✅ Live | Free for all users |
+| Condition-Adjusted Pricing | ✅ Live | NM/LP/MP/HP/Damaged |
+| Cost Basis + ROI | ✅ Live | Portfolio + per-card |
+| CSV Export | ✅ Live | Always free |
+| Sealed Vault MVP | ✅ Live | Full CRUD, 6 formats |
+| Fuzzy Search | ✅ Live | Server + client, all views |
+| eBay Sold Estimate | ⚡ Partial | Estimated; real API ready |
+| Grading Submission Tracker | 📋 Planned | Pro feature, 3–6 months |
+| Cross-Region Price Panel | 📋 Planned | Japan/EU/US, 6–12 months |
+| Card Story Mode | 📋 Planned | Free, high emotional lock-in |
+| LGS SaaS Tools | 📋 Planned | B2B revenue, 3–6 months |
+| Pro Subscription Paywall | 📋 Planned | $4.99/mo when features justify it |
+
+---
+
+### 34. Research-to-Implementation Traceability
+
+Every implemented feature maps directly to a research finding:
+
+| Research Verbatim | Feature | File |
+|-------------------|---------|------|
+| *"Never trust the app price. Check eBay sold and then subtract 15% for fees."* | Realizable Price + eBay Sold estimate | `src/lib/pricing.ts`, `src/app/page.tsx` |
+| *"I bought 50 PSA 10s at $40 each, now they're $200. What's my return?"* | Cost Basis + True ROI | `src/app/page.tsx` (CollectionView) |
+| *"A NM Base Charizard and a PSA 2 should not share a price."* | Condition Multipliers | `src/app/page.tsx` (getConditionAdjustedPrice) |
+| *"I track my sealed in a Google Sheet. It's embarrassing that no app does this."* | Sealed Vault | `src/app/page.tsx` (SealedVaultView) |
+| *"I forgot I had 10 Champion's Path ETBs in my attic."* | Storage Location Tracking | `src/app/page.tsx` (SealedItem) |
+| *"Collectr says $500, I can't sell for $350."* | Three-Vector Pricing (Market / eBay / Realizable) | `src/app/components/PriceDashboard.tsx` |
+| *"Every app treats all copies as identical."* | Condition Badges + Adjusted Prices | `src/app/page.tsx` (CollectionView) |
+| *"I just want one app that does it all."* | Unified platform: cards + sealed + search + export | `src/app/page.tsx` |
+
+---
+
+*End of Phase 4 Implementation Log*
+
+---
+
 *End of Findings*
