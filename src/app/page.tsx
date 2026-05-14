@@ -16,6 +16,7 @@ import Sparkline from "./components/Sparkline";
 import PriceDashboard from "./components/PriceDashboard";
 import { POKEMON_NAMES } from "@/lib/pokemon-names";
 import { convertToCad, type Currency } from "@/lib/pricing";
+import { parseSearchQuery, filterCollectionByQuery } from "@/lib/search-utils";
 
 /* ═══════════════════════════════════════
    TYPES
@@ -615,13 +616,7 @@ function WatchlistView({ watchlist, onCardClick, onRemove }: {
   const [searchQuery, setSearchQuery] = useState("");
 
   const filtered = useMemo(() => {
-    if (!searchQuery.trim()) return watchlist;
-    const fuse = new Fuse(watchlist, {
-      keys: ['name', 'setName', 'number', 'rarity'],
-      threshold: 0.35,
-      ignoreLocation: true,
-    });
-    return fuse.search(searchQuery.trim()).map(r => r.item);
+    return filterCollectionByQuery(watchlist, searchQuery);
   }, [watchlist, searchQuery]);
 
   if (watchlist.length===0) {
@@ -689,13 +684,7 @@ function CollectionView({ collection, onCardClick, onRemove, onUpdateItem }: {
   const [searchQuery, setSearchQuery] = useState("");
 
   const filtered = useMemo(() => {
-    if (!searchQuery.trim()) return collection;
-    const fuse = new Fuse(collection, {
-      keys: ['name', 'setName', 'number', 'rarity', 'condition'],
-      threshold: 0.35,
-      ignoreLocation: true,
-    });
-    return fuse.search(searchQuery.trim()).map(r => r.item);
+    return filterCollectionByQuery(collection, searchQuery);
   }, [collection, searchQuery]);
 
   if (collection.length===0) {
@@ -1205,28 +1194,15 @@ export default function Home() {
     return ()=>window.removeEventListener("keydown",handleKey);
   },[view,cards,selectedIndex,query,selected]);
 
-  /* Debounced search with card number pattern detection */
+  /* Debounced search with shared pattern detection */
   const search = useCallback(async(q:string)=>{
     if (q.length<2) { setCards([]); setTotal(0); setView("home"); return; }
     setLoading(true); setView("search"); setSelectedIndex(-1); setShowSuggestions(false);
 
-    // Detect card number patterns: "4/102", "#105", "Charizard ex 105"
-    let apiQuery = q;
-    const numberMatch = q.match(/^(\d+)\/\d+$/); // "4/102" → search by number
-    const hashNumberMatch = q.match(/^#(\d+)$/); // "#105" → search by number
-    const suffixNumberMatch = q.match(/(.+?)\s+(?:ex|V|VMAX|VSTAR)?\s*(\d+)$/i); // "Charizard ex 105"
-
-    if (numberMatch) {
-      apiQuery = `number:${numberMatch[1]}`;
-    } else if (hashNumberMatch) {
-      apiQuery = `number:${hashNumberMatch[1]}`;
-    } else if (suffixNumberMatch && !suffixNumberMatch[1].trim().match(/^(ex|V|VMAX|VSTAR)$/i)) {
-      // "Charizard ex 105" → search name + number
-      apiQuery = `name:"${suffixNumberMatch[1].trim()}" number:${suffixNumberMatch[2]}`;
-    }
+    const parsed = parseSearchQuery(q);
 
     try {
-      const resp = await fetch(`/api/cards?q=${encodeURIComponent(apiQuery)}&limit=24`);
+      const resp = await fetch(`/api/cards?q=${encodeURIComponent(parsed.apiQuery)}&limit=24`);
       const data = await resp.json();
       setCards(data.data||[]); setTotal(data.totalCount||0);
     } catch { setCards([]); }
