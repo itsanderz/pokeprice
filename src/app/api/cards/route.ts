@@ -6,6 +6,7 @@ import {
 } from '@/lib/marketplace';
 import { buildUnifiedPrices } from '@/lib/pricing';
 import { rankByRelevance } from '@/lib/search';
+import { rateLimit } from '@/lib/rate-limit';
 
 interface PokemonTcgResponse {
   data: Array<{
@@ -22,6 +23,17 @@ interface PokemonTcgResponse {
 }
 
 export async function GET(request: NextRequest) {
+  /* Rate limiting — 60 requests/minute per IP */
+  const forwarded = request.headers.get('x-forwarded-for');
+  const ip = forwarded?.split(',')[0]?.trim() ?? request.headers.get('x-real-ip') ?? 'unknown';
+  const limitCheck = rateLimit(ip, { windowMs: 60_000, maxRequests: 60 });
+  if (!limitCheck.allowed) {
+    return NextResponse.json(
+      { error: 'Rate limit exceeded. Try again in a moment.', resetAt: limitCheck.resetAt },
+      { status: 429 }
+    );
+  }
+
   const { searchParams } = new URL(request.url);
   const q = searchParams.get('q');
   const limit = searchParams.get('limit') || '12';

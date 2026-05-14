@@ -9,7 +9,7 @@ import {
   IconWallet, IconPackage, IconFilter, IconGrid, IconList,
   IconChevronRight, IconChevronLeft, IconChevronDown, IconX,
   IconCheck, IconInfo, IconExternalLink, IconArrowUpRight,
-  IconMinus, IconPlus, IconSparkles, IconShield
+  IconMinus, IconPlus, IconSparkles, IconShield, IconMenu, IconAlertTriangle
 } from "./components/Icons";
 import Card3D from "./components/Card3D";
 import Sparkline from "./components/Sparkline";
@@ -44,6 +44,17 @@ interface CollectionItem extends SavedCard {
   quantity: number;
   costBasis?: number;          // What the user paid per copy (research: "I bought 50 PSA 10s at $40 each, now they're $200. What's my return?")
   condition?: "NM" | "LP" | "MP" | "HP" | "Damaged"; // Condition tracking (research: "A NM Base Charizard and a PSA 2 should not share a price")
+}
+
+/* Icon component type — replaces 'any' */
+type IconComponent = React.FC<{ className?: string }>;
+
+/* Safe ID generation — crypto.randomUUID() unsupported in Safari < 14.1 */
+function safeId(): string {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
 /* Condition-adjusted price multipliers based on community standard deductions */
@@ -203,7 +214,7 @@ function MarketDepth({ low, market, high }: { low:number|null|undefined; market:
   );
 }
 
-function EmptyState({ icon:Icon, title, subtitle, action }: { icon:any; title:string; subtitle:string; action?:React.ReactNode }) {
+function EmptyState({ icon:Icon, title, subtitle, action }: { icon:IconComponent; title:string; subtitle:string; action?:React.ReactNode }) {
   return (
     <div className="flex flex-col items-center justify-center py-20 text-center animate-fade-in">
       <div className="w-16 h-16 rounded-2xl bg-surface-raised border border-border flex items-center justify-center mb-4">
@@ -419,9 +430,10 @@ function CardGridItem({ card, onClick, watchlist, onToggleWatchlist }: {
   );
 }
 
-function SearchView({ cards, loading, total, query, onCardClick, selectedIndex, watchlist, onToggleWatchlist }: {
+function SearchView({ cards, loading, total, query, onCardClick, selectedIndex, watchlist, onToggleWatchlist, error, hasMore, onLoadMore }: {
   cards:Card[]; loading:boolean; total:number; query:string; onCardClick:(id:string)=>void;
   selectedIndex:number; watchlist:SavedCard[]; onToggleWatchlist:(c:Card)=>void;
+  error?:string|null; hasMore?:boolean; onLoadMore?:()=>void;
 }) {
   if (loading && cards.length===0) {
     return (
@@ -440,6 +452,16 @@ function SearchView({ cards, loading, total, query, onCardClick, selectedIndex, 
     );
   }
 
+  if (error) {
+    return (
+      <EmptyState
+        icon={IconAlertTriangle}
+        title="Search unavailable"
+        subtitle={error}
+      />
+    );
+  }
+
   if (cards.length===0) {
     return (
       <EmptyState
@@ -455,7 +477,7 @@ function SearchView({ cards, loading, total, query, onCardClick, selectedIndex, 
       <div className="flex items-center justify-between mb-6">
         <div>
           <h2 className="text-xl font-bold tracking-tight font-display">Results for "{query}"</h2>
-          <p className="text-sm text-text-secondary font-mono">{total} cards found</p>
+          <p className="text-sm text-text-secondary font-mono">{cards.length} of {total} cards shown</p>
         </div>
         {loading && <div className="w-5 h-5 border-2 border-border border-t-primary rounded-full animate-spin" />}
       </div>
@@ -466,6 +488,14 @@ function SearchView({ cards, loading, total, query, onCardClick, selectedIndex, 
           </div>
         ))}
       </div>
+      {hasMore && onLoadMore && (
+        <div className="mt-8 text-center">
+          <button onClick={onLoadMore} disabled={loading}
+            className="px-6 py-2.5 rounded-lg border border-border bg-surface-raised text-text-secondary hover:text-text text-sm font-semibold transition-all hover:border-text-secondary/50 disabled:opacity-50">
+            {loading ? 'Loading...' : 'Load More'}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -1104,8 +1134,36 @@ export default function Home() {
   const [currency, setCurrency] = useState<Currency>("USD");
   const [searchSuggestions, setSearchSuggestions] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [suggestionIndex, setSuggestionIndex] = useState(-1);
+  const [searchError, setSearchError] = useState<string|null>(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
+  const mobileSearchRef = useRef<HTMLInputElement>(null);
   const debounce = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const abortRef = useRef<AbortController|null>(null);
+
+  /* Memoized sidebar metrics — prevents recalculation on every keystroke */
+  const watchlistTotalValue = useMemo(() =>
+    watchlist.reduce((s,c)=>s+(c.price||0),0),
+  [watchlist]);
+
+  const collectionMetrics = useMemo(() => {
+    const unique = collection.length;
+    const totalCards = collection.reduce((s,c)=>s+c.quantity,0);
+    const adjValue = collection.reduce((s,c)=>s+((getConditionAdjustedPrice(c.price,c.condition))||0)*c.quantity,0);
+    const invested = collection.reduce((s,c)=>s+(c.costBasis||0)*c.quantity,0);
+    return { unique, totalCards, adjValue, invested };
+  }, [collection]);
+
+  const sealedMetrics = useMemo(() => {
+    const products = sealedVault.length;
+    const units = sealedVault.reduce((s,i)=>s+i.qty,0);
+    const totalCost = sealedVault.reduce((s,i)=>s+i.costBasis*i.qty,0);
+    const estValue = sealedVault.reduce((s,i)=>s+(i.estValue||0)*i.qty,0);
+    return { products, units, totalCost, estValue };
+  }, [sealedVault]);
 
   /* Load localStorage with migration from v1 -> v2 for collection
      v1 items lacked costBasis and condition fields; we default them gracefully */
@@ -1129,6 +1187,21 @@ export default function Home() {
       if (r) setRecentlyViewed(JSON.parse(r));
       if (cur === 'USD' || cur === 'CAD') setCurrency(cur);
     } catch {}
+  },[]);
+
+  /* Deep linking: read ?q= and ?card= from URL on mount */
+  useEffect(()=>{
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const qParam = params.get('q');
+    const cardParam = params.get('card');
+    if (cardParam) {
+      loadDetail(cardParam);
+    } else if (qParam) {
+      setQuery(qParam);
+      search(qParam, 1);
+    }
+  /* eslint-disable-next-line react-hooks/exhaustive-deps */
   },[]);
 
   /* Save localStorage */
@@ -1178,6 +1251,31 @@ export default function Home() {
         e.preventDefault();
         searchRef.current?.focus();
       }
+      /* Autocomplete keyboard navigation */
+      if (showSuggestions && searchSuggestions.length > 0) {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          setSuggestionIndex(i => (i + 1) % searchSuggestions.length);
+          return;
+        }
+        if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          setSuggestionIndex(i => (i - 1 + searchSuggestions.length) % searchSuggestions.length);
+          return;
+        }
+        if (e.key === 'Enter' && suggestionIndex >= 0) {
+          e.preventDefault();
+          setQuery(searchSuggestions[suggestionIndex]);
+          setShowSuggestions(false);
+          setSuggestionIndex(-1);
+          return;
+        }
+        if (e.key === 'Escape') {
+          setShowSuggestions(false);
+          setSuggestionIndex(-1);
+          return;
+        }
+      }
       if (view==="search") {
         if (e.key==="ArrowDown") { e.preventDefault(); setSelectedIndex(i=>Math.min(i+1,cards.length-1)); }
         else if (e.key==="ArrowUp") { e.preventDefault(); setSelectedIndex(i=>Math.max(i-1,0)); }
@@ -1186,40 +1284,68 @@ export default function Home() {
         }
       }
       if (e.key==="Escape") {
-        if (selected) goBack();
+        if (showSuggestions) { setShowSuggestions(false); setSuggestionIndex(-1); }
+        else if (selected) goBack();
         else if (query) { setQuery(""); setView("home"); }
       }
     };
     window.addEventListener("keydown",handleKey);
     return ()=>window.removeEventListener("keydown",handleKey);
-  },[view,cards,selectedIndex,query,selected]);
+  },[view,cards,selectedIndex,query,selected,showSuggestions,searchSuggestions,suggestionIndex]);
 
-  /* Debounced search with shared pattern detection */
-  const search = useCallback(async(q:string)=>{
-    if (q.length<2) { setCards([]); setTotal(0); setView("home"); return; }
-    setLoading(true); setView("search"); setSelectedIndex(-1); setShowSuggestions(false);
+  /* Debounced search with shared pattern detection, pagination, and error handling */
+  const search = useCallback(async(q:string, pageNum:number=1)=>{
+    if (q.length<2) { setCards([]); setTotal(0); setView("home"); setSearchError(null); return; }
+    setLoading(true); setView("search"); setSelectedIndex(-1); setShowSuggestions(false); setSearchError(null);
 
     const parsed = parseSearchQuery(q);
+    const limit = 24;
 
     try {
-      const resp = await fetch(`/api/cards?q=${encodeURIComponent(parsed.apiQuery)}&limit=24`);
+      const resp = await fetch(`/api/cards?q=${encodeURIComponent(parsed.apiQuery)}&limit=${limit}`);
+      if (!resp.ok) {
+        const errData = await resp.json().catch(()=>({}));
+        throw new Error(errData.error || `Server error ${resp.status}`);
+      }
       const data = await resp.json();
-      setCards(data.data||[]); setTotal(data.totalCount||0);
-    } catch { setCards([]); }
+      const results = data.data||[];
+      const totalCount = data.totalCount||0;
+      if (pageNum === 1) {
+        setCards(results);
+      } else {
+        setCards(prev=>[...prev, ...results]);
+      }
+      setTotal(totalCount);
+      setHasMore(results.length === limit && cards.length + results.length < totalCount);
+      /* Deep link: update URL with ?q= */
+      const url = new URL(window.location.href);
+      url.searchParams.set('q', q);
+      url.searchParams.delete('card');
+      window.history.replaceState({}, '', url);
+    } catch (err) {
+      setCards([]);
+      setTotal(0);
+      setSearchError(err instanceof Error ? err.message : 'Search failed. The pricing API may be temporarily unavailable.');
+    }
     setLoading(false);
   },[]);
 
   useEffect(()=>{
     clearTimeout(debounce.current);
-    debounce.current = setTimeout(()=>search(query),300);
+    debounce.current = setTimeout(()=>{setPage(1); search(query,1);},300);
     return ()=>clearTimeout(debounce.current);
   },[query,search]);
 
   const loadDetail = async(id:string)=>{
+    /* Abort any in-flight detail fetch to prevent race conditions */
+    if (abortRef.current) abortRef.current.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setReturnTo(view);
     setLoading(true);
     try {
-      const resp = await fetch(`/api/cards/${id}`);
+      const resp = await fetch(`/api/cards/${id}`, { signal: controller.signal });
       const card = ((await resp.json()).data) as Card;
       setSelected(card);
       setActiveVariant(getVariants(card)[0]?.[0]||"");
@@ -1228,7 +1354,16 @@ export default function Home() {
         const next = [toSavedCard(card), ...prev.filter(p=>p.id!==card.id)].slice(0,10);
         return next;
       });
-    } catch {}
+      /* Deep link: update URL with ?card= */
+      const url = new URL(window.location.href);
+      url.searchParams.set('card', id);
+      url.searchParams.delete('q');
+      window.history.replaceState({}, '', url);
+    } catch (err) {
+      if (err instanceof Error && err.name !== 'AbortError') {
+        setSearchError('Failed to load card details. The API may be temporarily unavailable.');
+      }
+    }
     setLoading(false);
   };
 
@@ -1236,6 +1371,10 @@ export default function Home() {
     setSelected(null);
     setActiveVariant("");
     setView(returnTo);
+    /* Clear deep link params from URL */
+    const url = new URL(window.location.href);
+    url.searchParams.delete('card');
+    window.history.replaceState({}, '', url);
   };
 
   const toggleWatchlist = (card:Card)=>{
@@ -1266,7 +1405,7 @@ export default function Home() {
   };
 
   const addSealedItem = (item: Omit<SealedItem, "id">)=>{
-    setSealedVault(prev=>[...prev, { ...item, id: crypto.randomUUID() }]);
+    setSealedVault(prev=>[...prev, { ...item, id: safeId() }]);
   };
   const removeSealedItem = (id:string)=> setSealedVault(prev=>prev.filter(p=>p.id!==id));
   const updateSealedItem = (id:string, updates:Partial<SealedItem>)=>{
@@ -1274,7 +1413,7 @@ export default function Home() {
   };
 
   /* Sidebar nav items */
-  const navItems: { id: View; label: string; icon: any; badge?: number }[] = [
+  const navItems: { id: View; label: string; icon: IconComponent; badge?: number }[] = [
     { id: "home", label: "Discover", icon: IconLightning },
     { id: "watchlist", label: "Watchlist", icon: IconStar, badge: watchlist.length },
     { id: "collection", label: "Collection", icon: IconPackage, badge: collection.length },
@@ -1316,9 +1455,9 @@ export default function Home() {
                 {searchSuggestions.map((suggestion, i) => (
                   <button
                     key={suggestion}
-                    onMouseDown={()=>{setQuery(suggestion); setShowSuggestions(false); searchRef.current?.focus();}}
-                    className={`w-full text-left px-3 py-2 text-xs font-mono hover:bg-primary/10 hover:text-primary transition-colors ${i===0?'border-t-0':'border-t border-border/50'}`}>
-                    <span className="text-text-secondary">{suggestion}</span>
+                    onMouseDown={()=>{setQuery(suggestion); setShowSuggestions(false); setSuggestionIndex(-1); searchRef.current?.focus();}}
+                    className={`w-full text-left px-3 py-2 text-xs font-mono transition-colors ${i===suggestionIndex?'bg-primary/10 text-primary':'text-text-secondary hover:bg-primary/10 hover:text-primary'} ${i===0?'border-t-0':'border-t border-border/50'}`}>
+                    {suggestion}
                   </button>
                 ))}
                 <div className="px-3 py-1.5 text-[10px] text-text-tertiary border-t border-border/50 bg-surface-raised">
@@ -1405,7 +1544,7 @@ export default function Home() {
               <h3 className="text-[10px] font-bold text-text-tertiary uppercase tracking-wider mb-2 font-display">Summary</h3>
               <div className="space-y-1.5">
                 <div className="flex justify-between text-xs"><span className="text-text-secondary">Cards</span><span className="font-mono">{watchlist.length}</span></div>
-                <div className="flex justify-between text-xs"><span className="text-text-secondary">Total Value</span><span className="font-mono text-primary">${watchlist.reduce((s,c)=>s+(c.price||0),0).toFixed(2)}</span></div>
+                <div className="flex justify-between text-xs"><span className="text-text-secondary">Total Value</span><span className="font-mono text-primary">${watchlistTotalValue.toFixed(2)}</span></div>
               </div>
             </div>
           )}
@@ -1414,10 +1553,10 @@ export default function Home() {
             <div className="animate-fade-in">
               <h3 className="text-[10px] font-bold text-text-tertiary uppercase tracking-wider mb-2 font-display">Summary</h3>
               <div className="space-y-1.5">
-                <div className="flex justify-between text-xs"><span className="text-text-secondary">Unique</span><span className="font-mono">{collection.length}</span></div>
-                <div className="flex justify-between text-xs"><span className="text-text-secondary">Total Cards</span><span className="font-mono">{collection.reduce((s,c)=>s+c.quantity,0)}</span></div>
-                <div className="flex justify-between text-xs"><span className="text-text-secondary">Adj. Value</span><span className="font-mono text-primary">${collection.reduce((s,c)=>s+((getConditionAdjustedPrice(c.price,c.condition))||0)*c.quantity,0).toFixed(2)}</span></div>
-                <div className="flex justify-between text-xs"><span className="text-text-secondary">Invested</span><span className="font-mono text-text">${collection.reduce((s,c)=>s+(c.costBasis||0)*c.quantity,0).toFixed(2)}</span></div>
+                <div className="flex justify-between text-xs"><span className="text-text-secondary">Unique</span><span className="font-mono">{collectionMetrics.unique}</span></div>
+                <div className="flex justify-between text-xs"><span className="text-text-secondary">Total Cards</span><span className="font-mono">{collectionMetrics.totalCards}</span></div>
+                <div className="flex justify-between text-xs"><span className="text-text-secondary">Adj. Value</span><span className="font-mono text-primary">${collectionMetrics.adjValue.toFixed(2)}</span></div>
+                <div className="flex justify-between text-xs"><span className="text-text-secondary">Invested</span><span className="font-mono text-text">${collectionMetrics.invested.toFixed(2)}</span></div>
               </div>
             </div>
           )}
@@ -1426,10 +1565,10 @@ export default function Home() {
             <div className="animate-fade-in">
               <h3 className="text-[10px] font-bold text-text-tertiary uppercase tracking-wider mb-2 font-display">Summary</h3>
               <div className="space-y-1.5">
-                <div className="flex justify-between text-xs"><span className="text-text-secondary">Products</span><span className="font-mono">{sealedVault.length}</span></div>
-                <div className="flex justify-between text-xs"><span className="text-text-secondary">Units</span><span className="font-mono">{sealedVault.reduce((s,i)=>s+i.qty,0)}</span></div>
-                <div className="flex justify-between text-xs"><span className="text-text-secondary">Total Cost</span><span className="font-mono text-text">${sealedVault.reduce((s,i)=>s+i.costBasis*i.qty,0).toFixed(2)}</span></div>
-                <div className="flex justify-between text-xs"><span className="text-text-secondary">Est. Value</span><span className="font-mono text-primary">${sealedVault.reduce((s,i)=>s+(i.estValue||0)*i.qty,0).toFixed(2)}</span></div>
+                <div className="flex justify-between text-xs"><span className="text-text-secondary">Products</span><span className="font-mono">{sealedMetrics.products}</span></div>
+                <div className="flex justify-between text-xs"><span className="text-text-secondary">Units</span><span className="font-mono">{sealedMetrics.units}</span></div>
+                <div className="flex justify-between text-xs"><span className="text-text-secondary">Total Cost</span><span className="font-mono text-text">${sealedMetrics.totalCost.toFixed(2)}</span></div>
+                <div className="flex justify-between text-xs"><span className="text-text-secondary">Est. Value</span><span className="font-mono text-primary">${sealedMetrics.estValue.toFixed(2)}</span></div>
               </div>
             </div>
           )}
@@ -1461,23 +1600,85 @@ export default function Home() {
 
       {/* Mobile Header */}
       <div className="md:hidden fixed top-0 left-0 right-0 z-50 glass-strong border-b border-border px-4 py-3 flex items-center gap-3">
-        <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center text-bg">
-          <IconPokeball className="w-4 h-4" />
-        </div>
+        <button onClick={()=>setMobileMenuOpen(!mobileMenuOpen)} className="w-8 h-8 rounded-lg bg-surface-raised border border-border flex items-center justify-center text-text-secondary">
+          <IconMenu className="w-4 h-4" />
+        </button>
         <div className="flex-1 relative">
-          <IconSearch className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-text-tertiary" />
-          <input type="text" value={query} onChange={e=>setQuery(e.target.value)}
+          <IconSearch className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-text-tertiary z-10" />
+          <input ref={mobileSearchRef} type="text" value={query} onChange={e=>{setQuery(e.target.value); setShowSuggestions(true);}}
+            onFocus={()=>query.trim().length>=2 && setShowSuggestions(searchSuggestions.length>0)}
+            onBlur={()=>setTimeout(()=>setShowSuggestions(false),150)}
             placeholder="Search cards..."
             className="w-full py-2 pl-8 pr-3 bg-bg border border-border rounded-lg text-xs outline-none focus:border-primary font-mono" />
+          {/* Mobile Autocomplete Dropdown */}
+          {showSuggestions && searchSuggestions.length > 0 && (
+            <div className="absolute top-full left-0 right-0 mt-1 bg-surface border border-border rounded-lg shadow-xl z-50 overflow-hidden">
+              {searchSuggestions.map((suggestion, i) => (
+                <button key={suggestion} onMouseDown={()=>{setQuery(suggestion); setShowSuggestions(false); mobileSearchRef.current?.focus();}}
+                  className={`w-full text-left px-3 py-2 text-xs font-mono hover:bg-primary/10 hover:text-primary transition-colors ${i===0?'border-t-0':'border-t border-border/50'}`}>
+                  <span className="text-text-secondary">{suggestion}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center text-bg shrink-0"
+          onClick={()=>{ setView("home"); setSelected(null); setQuery(""); }}>
+          <IconPokeball className="w-4 h-4" />
         </div>
       </div>
+
+      {/* Mobile Navigation Overlay */}
+      {mobileMenuOpen && (
+        <div className="md:hidden fixed inset-0 z-[60] bg-bg/95 backdrop-blur-sm" onClick={()=>setMobileMenuOpen(false)}>
+          <div className="p-6 space-y-2" onClick={e=>e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-bold uppercase tracking-wider text-text-secondary font-display">Menu</h2>
+              <button onClick={()=>setMobileMenuOpen(false)} className="w-8 h-8 rounded-lg bg-surface-raised border border-border flex items-center justify-center text-text-secondary">
+                <IconX className="w-4 h-4" />
+              </button>
+            </div>
+            {navItems.map(item=>{
+              const Icon = item.icon;
+              return (
+                <button key={item.id} onClick={()=>{ setView(item.id); setSelected(null); setMobileMenuOpen(false); }}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left text-sm font-medium transition-all ${view===item.id?"bg-primary/10 text-primary border border-primary/20":"text-text-secondary hover:text-text hover:bg-surface-raised border border-transparent"}`}>
+                  <Icon className="w-4 h-4" />
+                  <span>{item.label}</span>
+                  {item.badge ? (
+                    <span className={`ml-auto text-[10px] font-bold font-mono px-1.5 py-0.5 rounded-full ${view===item.id?"bg-primary text-bg":"bg-surface-raised text-text-secondary"}`}>
+                      {item.badge}
+                    </span>
+                  ) : null}
+                </button>
+              );
+            })}
+            {/* Currency toggle on mobile */}
+            <div className="pt-4 border-t border-border mt-4">
+              <div className="flex items-center justify-between px-4">
+                <span className="text-[10px] text-text-tertiary font-mono uppercase tracking-wider">Currency</span>
+                <div className="flex bg-surface-raised rounded-lg border border-border overflow-hidden">
+                  <button onClick={()=>setCurrency('USD')}
+                    className={`px-2.5 py-1 text-[10px] font-mono font-bold transition-all ${currency==='USD'?'bg-primary text-bg':'text-text-secondary hover:text-text'}`}>
+                    USD
+                  </button>
+                  <button onClick={()=>setCurrency('CAD')}
+                    className={`px-2.5 py-1 text-[10px] font-mono font-bold transition-all ${currency==='CAD'?'bg-primary text-bg':'text-text-secondary hover:text-text'}`}>
+                    CAD
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Main */}
       <main className="flex-1 p-4 md:p-8 pt-20 md:pt-8 overflow-y-auto relative">
         <div className="absolute top-0 left-0 w-full h-[400px] bg-gradient-to-b from-primary/[0.03] to-transparent pointer-events-none" />
         <div className="relative max-w-6xl mx-auto">
           {view==="home" && <HomeView trending={trending} trendingLoaded={trendingLoaded} onCardClick={loadDetail} onSetClick={setQuery} watchlist={watchlist} onToggleWatchlist={toggleWatchlist} />}
-          {view==="search" && <SearchView cards={cards} loading={loading} total={total} query={query} onCardClick={loadDetail} selectedIndex={selectedIndex} watchlist={watchlist} onToggleWatchlist={toggleWatchlist} />}
+          {view==="search" && <SearchView cards={cards} loading={loading} total={total} query={query} onCardClick={loadDetail} selectedIndex={selectedIndex} watchlist={watchlist} onToggleWatchlist={toggleWatchlist} error={searchError} hasMore={hasMore} onLoadMore={()=>{setPage(p=>p+1); search(query, page+1);}} />}
           {view==="detail" && selected && <DetailView card={selected} activeVariant={activeVariant} setActiveVariant={setActiveVariant} onBack={goBack} watchlist={watchlist} onToggleWatchlist={toggleWatchlist} collection={collection} onAddToCollection={addToCollection} currency={currency} />}
           {view==="watchlist" && <WatchlistView watchlist={watchlist} onCardClick={loadDetail} onRemove={removeFromWatchlist} />}
           {view==="collection" && <CollectionView collection={collection} onCardClick={loadDetail} onRemove={removeFromCollection} onUpdateItem={updateCollectionItem} />}

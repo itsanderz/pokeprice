@@ -202,3 +202,9 @@ export const IconAlertTriangle = ({ className }: { className?: string }) => (
     <path d="M12 9v4"/><path d="M12 17h.01"/>
   </svg>
 );
+
+export const IconMenu = ({ className }: { className?: string }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M4 6h16M4 12h16M4 18h16"/>
+  </svg>
+);
