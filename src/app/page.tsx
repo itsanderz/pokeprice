@@ -9,7 +9,8 @@ import {
   IconWallet, IconPackage, IconFilter, IconGrid, IconList,
   IconChevronRight, IconChevronLeft, IconChevronDown, IconX,
   IconCheck, IconInfo, IconExternalLink, IconArrowUpRight,
-  IconMinus, IconPlus, IconSparkles, IconShield, IconMenu, IconAlertTriangle
+  IconMinus, IconPlus, IconSparkles, IconShield, IconMenu, IconAlertTriangle,
+  IconBook, IconPen
 } from "./components/Icons";
 import Card3D from "./components/Card3D";
 import Sparkline from "./components/Sparkline";
@@ -66,7 +67,7 @@ const CONDITION_MULTIPLIERS: Record<string, number> = {
   Damaged: 0.10 // Damaged — 90% off
 };
 
-type View = "home" | "search" | "detail" | "watchlist" | "collection" | "sealed";
+type View = "home" | "search" | "detail" | "watchlist" | "collection" | "sealed" | "stories";
 
 /* Sealed product tracking — research gap: no competitor tracks sealed inventory */
 interface SealedItem {
@@ -80,6 +81,17 @@ interface SealedItem {
   storageLocation?: string;
   purchaseDate?: string;
   notes?: string;
+}
+
+/* Card Story Mode — attach memories, provenance, and meaning to individual cards.
+   Research: Memorial/Story Collectors need narrative attached to cards, not just prices. */
+interface CardStory {
+  id: string;              // card.id (foreign key)
+  title: string;
+  body: string;
+  date: string;            // ISO date of the memory/event
+  createdAt: string;       // ISO date of story creation
+  updatedAt: string;       // ISO date of last edit
 }
 
 /* ═══════════════════════════════════════
@@ -500,11 +512,98 @@ function SearchView({ cards, loading, total, query, onCardClick, selectedIndex, 
   );
 }
 
-function DetailView({ card, activeVariant, setActiveVariant, onBack, watchlist, onToggleWatchlist, collection, onAddToCollection, currency }: {
+function DetailStorySection({ cardId, story, onSave, onRemove }: {
+  cardId: string;
+  story: CardStory | null;
+  onSave: (cardId: string, title: string, body: string, date: string) => void;
+  onRemove: (cardId: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [title, setTitle] = useState(story?.title || "");
+  const [body, setBody] = useState(story?.body || "");
+  const [date, setDate] = useState(story?.date || "");
+
+  const handleSave = () => {
+    if (!title.trim() && !body.trim()) return;
+    onSave(cardId, title.trim(), body.trim(), date);
+    setEditing(false);
+  };
+
+  if (!editing && !story) {
+    return (
+      <button onClick={() => setEditing(true)}
+        className="mt-4 flex items-center gap-2 text-xs text-text-secondary hover:text-primary transition-colors group">
+        <div className="w-7 h-7 rounded-lg bg-surface-raised border border-border flex items-center justify-center group-hover:border-primary/40 transition-colors">
+          <IconPen className="w-3.5 h-3.5" />
+        </div>
+        <span className="font-medium">Add a story to this card</span>
+      </button>
+    );
+  }
+
+  if (!editing && story) {
+    return (
+      <div className="mt-4 glass rounded-xl p-4 border border-border">
+        <div className="flex items-start justify-between gap-3 mb-2">
+          <div className="flex items-center gap-2">
+            <IconBook className="w-4 h-4 text-primary" />
+            <h4 className="text-sm font-bold text-primary">{story.title}</h4>
+          </div>
+          <div className="flex items-center gap-1">
+            <button onClick={() => { setTitle(story.title); setBody(story.body); setDate(story.date); setEditing(true); }}
+              className="w-6 h-6 rounded-md bg-surface-raised border border-border flex items-center justify-center text-text-tertiary hover:text-primary hover:border-primary/40 transition-all">
+              <IconPen className="w-3 h-3" />
+            </button>
+            <button onClick={() => onRemove(cardId)}
+              className="w-6 h-6 rounded-md bg-surface-raised border border-border flex items-center justify-center text-text-tertiary hover:text-rose-400 hover:border-rose-500/40 transition-all">
+              <IconX className="w-3 h-3" />
+            </button>
+          </div>
+        </div>
+        <p className="text-xs text-text-secondary leading-relaxed whitespace-pre-wrap mb-2">{story.body}</p>
+        <div className="flex items-center gap-3 text-[10px] text-text-tertiary font-mono">
+          {story.date && <span>{new Date(story.date).toLocaleDateString()}</span>}
+          <span>Edited {new Date(story.updatedAt).toLocaleDateString()}</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-4 glass rounded-xl p-4 border border-border space-y-3">
+      <div className="flex items-center gap-2 mb-1">
+        <IconPen className="w-4 h-4 text-primary" />
+        <h4 className="text-sm font-bold text-primary">{story ? "Edit Story" : "New Story"}</h4>
+      </div>
+      <input type="text" value={title} onChange={e => setTitle(e.target.value)} placeholder="Story title..."
+        className="w-full py-2 px-3 bg-bg border border-border rounded-lg text-sm outline-none focus:border-primary font-mono" />
+      <textarea value={body} onChange={e => setBody(e.target.value)} placeholder="Why does this card matter to you?"
+        rows={4}
+        className="w-full py-2 px-3 bg-bg border border-border rounded-lg text-sm outline-none focus:border-primary font-mono resize-none" />
+      <input type="date" value={date} onChange={e => setDate(e.target.value)}
+        className="py-2 px-3 bg-bg border border-border rounded-lg text-sm outline-none focus:border-primary font-mono" />
+      <div className="flex gap-2">
+        <button onClick={handleSave}
+          className="px-4 py-2 rounded-lg bg-primary text-bg text-sm font-bold hover:bg-primary/90 transition-colors">
+          Save Story
+        </button>
+        <button onClick={() => { setEditing(false); setTitle(story?.title||""); setBody(story?.body||""); setDate(story?.date||""); }}
+          className="px-4 py-2 rounded-lg border border-border bg-surface-raised text-text-secondary text-sm font-semibold hover:text-text transition-colors">
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function DetailView({ card, activeVariant, setActiveVariant, onBack, watchlist, onToggleWatchlist, collection, onAddToCollection, currency, stories, onAddStory, onRemoveStory }: {
   card:Card; activeVariant:string; setActiveVariant:(v:string)=>void; onBack:()=>void;
   watchlist:SavedCard[]; onToggleWatchlist:(c:Card)=>void;
   collection:CollectionItem[]; onAddToCollection:(c:Card)=>void;
   currency: Currency;
+  stories: CardStory[];
+  onAddStory: (cardId: string, title: string, body: string, date: string) => void;
+  onRemoveStory: (cardId: string) => void;
 }) {
   const prices = card.tcgplayer?.prices?.[activeVariant];
   const cm = card.cardmarket?.prices;
@@ -630,6 +729,9 @@ function DetailView({ card, activeVariant, setActiveVariant, onBack, watchlist, 
               {inCollection ? `In Collection (${inCollection.quantity})` : "Add to Collection"}
             </button>
           </div>
+
+          {/* Card Story Mode */}
+          <DetailStorySection cardId={card.id} story={stories.find(s=>s.id===card.id)||null} onSave={onAddStory} onRemove={onRemoveStory} />
         </div>
       </div>
 
@@ -707,9 +809,10 @@ function WatchlistView({ watchlist, onCardClick, onRemove }: {
   );
 }
 
-function CollectionView({ collection, onCardClick, onRemove, onUpdateItem }: {
+function CollectionView({ collection, onCardClick, onRemove, onUpdateItem, stories }: {
   collection:CollectionItem[]; onCardClick:(id:string)=>void; onRemove:(id:string)=>void;
   onUpdateItem:(id:string, updates:Partial<CollectionItem>)=>void;
+  stories: CardStory[];
 }) {
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -786,10 +889,16 @@ function CollectionView({ collection, onCardClick, onRemove, onUpdateItem }: {
           const adjPrice = getConditionAdjustedPrice(card.price, card.condition);
           const hasBasis = (card.costBasis ?? 0) > 0;
           const cardRoi = hasBasis && adjPrice ? ((adjPrice - card.costBasis!) / card.costBasis!) * 100 : null;
+          const hasStory = stories.some(s=>s.id===card.id);
           return (
           <div key={card.id} className="relative group">
             <button onClick={()=>onCardClick(card.id)} className="w-full text-left flex flex-col h-full bg-surface border border-border rounded-xl p-4 hover:border-primary/30 transition-colors">
               <div className="relative mb-3 flex-1 flex items-center justify-center min-h-[140px]">
+                {hasStory && (
+                  <div className="absolute top-1 left-1 z-20 w-6 h-6 rounded-md bg-primary/90 border border-primary/50 flex items-center justify-center text-bg shadow-sm">
+                    <IconBook className="w-3 h-3" />
+                  </div>
+                )}
                 {card.imageSmall ? (
                   <img src={card.imageSmall} alt={card.name} className="w-full max-h-48 object-contain rounded-lg" loading="lazy" />
                 ) : (
@@ -1112,6 +1221,92 @@ function SealedVaultView({ items, onAdd, onRemove, onUpdate }: {
   );
 }
 
+function StoriesView({ stories, collection, onCardClick, onRemove }: {
+  stories: CardStory[];
+  collection: CollectionItem[];
+  onCardClick: (id: string) => void;
+  onRemove: (id: string) => void;
+}) {
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const enriched = useMemo(() => {
+    return stories.map(story => {
+      const item = collection.find(c => c.id === story.id);
+      return { story, item };
+    }).filter(({ story }) => {
+      if (!searchQuery.trim()) return true;
+      const q = searchQuery.toLowerCase();
+      return story.title.toLowerCase().includes(q) || story.body.toLowerCase().includes(q) || story.id.toLowerCase().includes(q);
+    });
+  }, [stories, collection, searchQuery]);
+
+  if (stories.length === 0) {
+    return (
+      <EmptyState
+        icon={IconBook}
+        title="No stories yet"
+        subtitle="Every card has a story. Add one from any card's detail page to preserve the memory behind your collection."
+      />
+    );
+  }
+
+  return (
+    <div className="animate-fade-in-up">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h2 className="text-xl font-bold tracking-tight font-display">Card Stories</h2>
+          <p className="text-sm text-text-secondary font-mono">{enriched.length} of {stories.length} stories</p>
+        </div>
+        <div className="relative">
+          <IconSearch className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-text-tertiary" />
+          <input type="text" value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+            placeholder="Search stories..."
+            className="py-2 pl-8 pr-3 bg-bg border border-border rounded-lg text-xs outline-none focus:border-primary font-mono w-48" />
+        </div>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {enriched.map(({ story, item }) => (
+          <div key={story.id} className="glass rounded-2xl p-5 relative group">
+            <div className="flex items-start gap-4 mb-3">
+              {item?.imageSmall ? (
+                <button onClick={() => onCardClick(story.id)} className="shrink-0 w-16 h-24 rounded-lg overflow-hidden bg-surface-raised border border-border hover:border-primary/40 transition-colors">
+                  <img src={item.imageSmall} alt={item.name} className="w-full h-full object-contain" />
+                </button>
+              ) : (
+                <div className="shrink-0 w-16 h-24 rounded-lg bg-surface-raised border border-border flex items-center justify-center">
+                  <IconPokeball className="w-6 h-6 text-text-tertiary" />
+                </div>
+              )}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <div className="text-sm font-bold truncate">{item?.name || story.id}</div>
+                    <div className="text-[11px] text-text-secondary font-mono">{item?.setName}</div>
+                  </div>
+                  <button onClick={() => onRemove(story.id)}
+                    className="w-7 h-7 rounded-lg bg-surface/80 backdrop-blur border border-border flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all hover:border-rose-500/50 hover:text-rose-400">
+                    <IconX className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <div className="text-[10px] text-text-tertiary font-mono mt-0.5">
+                  {story.date ? new Date(story.date).toLocaleDateString() : 'No date'}
+                </div>
+              </div>
+            </div>
+            <div className="mb-2">
+              <h3 className="text-sm font-semibold text-primary mb-1">{story.title}</h3>
+              <p className="text-xs text-text-secondary leading-relaxed whitespace-pre-wrap">{story.body}</p>
+            </div>
+            <div className="text-[10px] text-text-tertiary font-mono">
+              Last edited {new Date(story.updatedAt).toLocaleDateString()}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /* ═══════════════════════════════════════
    MAIN
    ═══════════════════════════════════════ */
@@ -1129,6 +1324,7 @@ export default function Home() {
   const [watchlist, setWatchlist] = useState<SavedCard[]>([]);
   const [collection, setCollection] = useState<CollectionItem[]>([]);
   const [sealedVault, setSealedVault] = useState<SealedItem[]>([]);
+  const [stories, setStories] = useState<CardStory[]>([]);
   const [recentlyViewed, setRecentlyViewed] = useState<SavedCard[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(-1);
   const [currency, setCurrency] = useState<Currency>("USD");
@@ -1184,6 +1380,8 @@ export default function Home() {
         })));
       }
       if (s) setSealedVault(JSON.parse(s));
+      const st = localStorage.getItem("pokeprice_stories_v1");
+      if (st) setStories(JSON.parse(st));
       if (r) setRecentlyViewed(JSON.parse(r));
       if (cur === 'USD' || cur === 'CAD') setCurrency(cur);
     } catch {}
@@ -1208,6 +1406,7 @@ export default function Home() {
   useEffect(()=>{ localStorage.setItem("pokeprice_watchlist_v1", JSON.stringify(watchlist)); },[watchlist]);
   useEffect(()=>{ localStorage.setItem("pokeprice_collection_v2", JSON.stringify(collection)); },[collection]);
   useEffect(()=>{ localStorage.setItem("pokeprice_sealed_v1", JSON.stringify(sealedVault)); },[sealedVault]);
+  useEffect(()=>{ localStorage.setItem("pokeprice_stories_v1", JSON.stringify(stories)); },[stories]);
   useEffect(()=>{ localStorage.setItem("pokeprice_recent_v1", JSON.stringify(recentlyViewed)); },[recentlyViewed]);
   useEffect(()=>{ localStorage.setItem("pokeprice_currency_v1", currency); },[currency]);
 
@@ -1412,11 +1611,24 @@ export default function Home() {
     setSealedVault(prev=>prev.map(p=>p.id===id?{...p,...updates}:p));
   };
 
+  const addStory = (cardId: string, title: string, body: string, date: string) => {
+    const now = new Date().toISOString();
+    setStories(prev => {
+      const existing = prev.find(s => s.id === cardId);
+      if (existing) {
+        return prev.map(s => s.id === cardId ? { ...s, title, body, date, updatedAt: now } : s);
+      }
+      return [...prev, { id: cardId, title, body, date, createdAt: now, updatedAt: now }];
+    });
+  };
+  const removeStory = (cardId: string) => setStories(prev => prev.filter(s => s.id !== cardId));
+
   /* Sidebar nav items */
   const navItems: { id: View; label: string; icon: IconComponent; badge?: number }[] = [
     { id: "home", label: "Discover", icon: IconLightning },
     { id: "watchlist", label: "Watchlist", icon: IconStar, badge: watchlist.length },
     { id: "collection", label: "Collection", icon: IconPackage, badge: collection.length },
+    { id: "stories", label: "Stories", icon: IconBook, badge: stories.length },
     { id: "sealed", label: "Sealed Vault", icon: IconShield, badge: sealedVault.length },
   ];
 
@@ -1572,6 +1784,18 @@ export default function Home() {
               </div>
             </div>
           )}
+
+          {view==="stories" && (
+            <div className="animate-fade-in">
+              <h3 className="text-[10px] font-bold text-text-tertiary uppercase tracking-wider mb-2 font-display">Summary</h3>
+              <div className="space-y-1.5">
+                <div className="flex justify-between text-xs"><span className="text-text-secondary">Stories</span><span className="font-mono">{stories.length}</span></div>
+              </div>
+              <p className="text-[11px] text-text-tertiary mt-3 leading-relaxed">
+                Attach memories, provenance, and meaning to the cards that matter most.
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Currency Toggle */}
@@ -1679,10 +1903,11 @@ export default function Home() {
         <div className="relative max-w-6xl mx-auto">
           {view==="home" && <HomeView trending={trending} trendingLoaded={trendingLoaded} onCardClick={loadDetail} onSetClick={setQuery} watchlist={watchlist} onToggleWatchlist={toggleWatchlist} />}
           {view==="search" && <SearchView cards={cards} loading={loading} total={total} query={query} onCardClick={loadDetail} selectedIndex={selectedIndex} watchlist={watchlist} onToggleWatchlist={toggleWatchlist} error={searchError} hasMore={hasMore} onLoadMore={()=>{setPage(p=>p+1); search(query, page+1);}} />}
-          {view==="detail" && selected && <DetailView card={selected} activeVariant={activeVariant} setActiveVariant={setActiveVariant} onBack={goBack} watchlist={watchlist} onToggleWatchlist={toggleWatchlist} collection={collection} onAddToCollection={addToCollection} currency={currency} />}
+          {view==="detail" && selected && <DetailView card={selected} activeVariant={activeVariant} setActiveVariant={setActiveVariant} onBack={goBack} watchlist={watchlist} onToggleWatchlist={toggleWatchlist} collection={collection} onAddToCollection={addToCollection} currency={currency} stories={stories} onAddStory={addStory} onRemoveStory={removeStory} />}
           {view==="watchlist" && <WatchlistView watchlist={watchlist} onCardClick={loadDetail} onRemove={removeFromWatchlist} />}
-          {view==="collection" && <CollectionView collection={collection} onCardClick={loadDetail} onRemove={removeFromCollection} onUpdateItem={updateCollectionItem} />}
+          {view==="collection" && <CollectionView collection={collection} onCardClick={loadDetail} onRemove={removeFromCollection} onUpdateItem={updateCollectionItem} stories={stories} />}
           {view==="sealed" && <SealedVaultView items={sealedVault} onAdd={addSealedItem} onRemove={removeSealedItem} onUpdate={updateSealedItem} />}
+          {view==="stories" && <StoriesView stories={stories} collection={collection} onCardClick={loadDetail} onRemove={removeStory} />}
         </div>
       </main>
     </div>
