@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { IconTrendUp, IconTrendDown, IconCheck, IconAlertTriangle, IconClock, IconExternalLink } from "./Icons";
+import { IconTrendUp, IconTrendDown, IconCheck, IconAlertTriangle, IconClock, IconExternalLink, IconGlobe } from "./Icons";
 import { buildUnifiedPrices, calculateConfidence, CONFIDENCE_META, formatCurrency, convertToCad, type Currency } from "@/lib/pricing";
 
 interface CardPrice {
@@ -320,6 +320,17 @@ export default function PriceDashboard({ card, activeVariant, currency = 'USD' }
         </div>
       )}
 
+      {/* Cross-Region Price Panel — research: JP cards often 10-15% cheaper domestically,
+          but shipping + duties complicate arbitrage. Displayed as context, not live data. */}
+      <div className="glass rounded-2xl p-5">
+        <div className="flex items-center gap-2 mb-4">
+          <IconGlobe className="w-4 h-4 text-primary" />
+          <h3 className="text-sm font-bold text-text-secondary uppercase tracking-wider">Cross-Region Estimates</h3>
+          <span className="text-[10px] text-text-tertiary ml-2">estimates only — not live data</span>
+        </div>
+        <CrossRegionPanel tcgMarket={display.tcgMarket} currency={currency} />
+      </div>
+
       {/* Detailed Table */}
       <div className="glass rounded-xl overflow-hidden">
         <table className="w-full text-sm">
@@ -341,6 +352,89 @@ export default function PriceDashboard({ card, activeVariant, currency = 'USD' }
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+function CrossRegionPanel({ tcgMarket, currency }: { tcgMarket: number | null; currency: Currency }) {
+  if (!tcgMarket) return (
+    <div className="text-sm text-text-secondary">No market price available for cross-region estimation.</div>
+  );
+
+  const sym = currency === 'CAD' ? 'C$' : '$';
+  const base = currency === 'CAD' ? tcgMarket / 1.36 : tcgMarket;
+
+  /* Research-derived regional adjustments:
+     - Japan: Japanese cards ~12% cheaper domestically, but +$15-25 shipping per small order
+     - EU: ~5% cheaper, +$12-18 shipping, VAT varies
+     - UK: ~3% cheaper, +$15-22 shipping, 20% VAT on imports > £135
+     - These are rough estimates for context only */
+  const regions = [
+    {
+      region: "Japan",
+      flag: "🇯🇵",
+      currency: "JPY",
+      estPrice: base * 0.88 * 140, // ~12% cheaper, ~140 JPY/USD
+      shipping: 18,
+      notes: "Japanese cards often cheaper domestically. Use proxy like Buyee, ZenMarket."
+    },
+    {
+      region: "EU",
+      flag: "🇪🇺",
+      currency: "EUR",
+      estPrice: base * 0.95 * EUR_TO_USD,
+      shipping: 15,
+      notes: "Cardmarket.de for German sellers. VAT applies on imports > €150."
+    },
+    {
+      region: "UK",
+      flag: "🇬🇧",
+      currency: "GBP",
+      estPrice: base * 0.97 * 0.79, // ~0.79 GBP/USD
+      shipping: 18,
+      notes: "20% VAT on imports > £135. eBay UK often competitive."
+    },
+    {
+      region: "Singapore",
+      flag: "🇸🇬",
+      currency: "SGD",
+      estPrice: base * 1.02 * 1.35, // slightly premium, ~1.35 SGD/USD
+      shipping: 12,
+      notes: "Strong local scene. Oxley Grading popular. PSA middlemen available."
+    },
+  ];
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      {regions.map(r => {
+        const totalLand = r.estPrice + r.shipping;
+        const diff = totalLand - base;
+        const diffPct = (diff / base) * 100;
+        const cheaper = diff < 0;
+        return (
+          <div key={r.region} className="bg-surface-raised border border-border rounded-xl p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <span className="text-lg">{r.flag}</span>
+              <div>
+                <div className="text-sm font-bold">{r.region}</div>
+                <div className="text-[10px] text-text-secondary font-mono">{r.currency}</div>
+              </div>
+            </div>
+            <div className="mb-2">
+              <div className="text-[10px] text-text-secondary uppercase tracking-wider">Est. Price + Shipping</div>
+              <div className="text-xl font-bold font-mono tabular-nums">
+                {sym}{totalLand.toFixed(2)}
+              </div>
+            </div>
+            <div className={`text-[11px] font-mono mb-2 ${cheaper ? 'text-emerald-400' : 'text-rose-400'}`}>
+              {cheaper ? '▼' : '▲'} {sym}{Math.abs(diff).toFixed(2)} ({Math.abs(diffPct).toFixed(0)}%)
+            </div>
+            <div className="text-[10px] text-text-tertiary leading-relaxed">
+              {r.notes}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

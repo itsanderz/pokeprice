@@ -10,7 +10,7 @@ import {
   IconChevronRight, IconChevronLeft, IconChevronDown, IconX,
   IconCheck, IconInfo, IconExternalLink, IconArrowUpRight,
   IconMinus, IconPlus, IconSparkles, IconShield, IconMenu, IconAlertTriangle,
-  IconBook, IconPen
+  IconBook, IconPen, IconClipboard, IconGlobe
 } from "./components/Icons";
 import Card3D from "./components/Card3D";
 import Sparkline from "./components/Sparkline";
@@ -67,7 +67,7 @@ const CONDITION_MULTIPLIERS: Record<string, number> = {
   Damaged: 0.10 // Damaged — 90% off
 };
 
-type View = "home" | "search" | "detail" | "watchlist" | "collection" | "sealed" | "stories";
+type View = "home" | "search" | "detail" | "watchlist" | "collection" | "sealed" | "stories" | "grading";
 
 /* Sealed product tracking — research gap: no competitor tracks sealed inventory */
 interface SealedItem {
@@ -92,6 +92,41 @@ interface CardStory {
   date: string;            // ISO date of the memory/event
   createdAt: string;       // ISO date of story creation
   updatedAt: string;       // ISO date of last edit
+}
+
+/* Grading Submission Tracker — research: users check status 5+ times/day, turnaround times are unreliable,
+   true cost basis includes grading fees + shipping + platform fees. Pro feature. */
+interface GradingSubmission {
+  id: string;
+  cardName: string;
+  cardId?: string;         // link to collection card if applicable
+  imageSmall?: string;
+  service: "PSA" | "BGS" | "CGC" | "SGC" | "TAG" | "ARS" | "ACE" | "Graad" | "Other";
+  serviceLevel: string;    // e.g. "Value", "Express", "Regular"
+  declaredValue: number;   // insured value
+  gradingCost: number;     // per-card grading fee
+  shippingCost: number;    // to/from grader
+  otherCosts: number;      // middleman, supplies, etc.
+  submissionDate: string;  // ISO date
+  trackingNumber?: string;
+  currentStage: string;
+  stages: { name: string; date: string; notes?: string }[];
+  estimatedCompletion?: string;
+  actualCompletion?: string;
+  status: "pending" | "in_transit" | "received" | "grading" | "completed" | "lost" | "cancelled";
+  grade?: string;          // e.g. "PSA 10", "BGS 9.5"
+  certNumber?: string;
+  notes?: string;
+}
+
+/* Cross-Region Price estimates — research: JP cards often 10-15% cheaper in Japan,
+   but shipping + duties complicate math. Displayed as context, not live data. */
+interface RegionPrice {
+  region: "US" | "JP" | "EU" | "UK" | "CA";
+  currency: string;
+  price: number | null;
+  source: string;
+  lastUpdated?: string;
 }
 
 /* ═══════════════════════════════════════
@@ -1307,6 +1342,344 @@ function StoriesView({ stories, collection, onCardClick, onRemove }: {
   );
 }
 
+function GradingTrackerView({ submissions, collection, onAdd, onRemove, onUpdate, onCardClick }: {
+  submissions: GradingSubmission[];
+  collection: CollectionItem[];
+  onAdd: (item: Omit<GradingSubmission, "id">) => void;
+  onRemove: (id: string) => void;
+  onUpdate: (id: string, updates: Partial<GradingSubmission>) => void;
+  onCardClick: (id: string) => void;
+}) {
+  const [showAdd, setShowAdd] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [newItem, setNewItem] = useState<Partial<GradingSubmission>>({
+    service: "PSA",
+    serviceLevel: "Value",
+    status: "pending",
+    stages: [],
+    gradingCost: 0,
+    shippingCost: 0,
+    otherCosts: 0,
+    declaredValue: 0,
+  });
+
+  const SERVICES = ["PSA", "BGS", "CGC", "SGC", "TAG", "ARS", "ACE", "Graad", "Other"] as const;
+  const STATUSES = ["pending", "in_transit", "received", "grading", "completed", "lost", "cancelled"] as const;
+  const STAGE_NAMES = ["Order Created", "Shipped to Grader", "Arrived", "Order Prep", "Research & ID", "Grading", "Assembly", "QA", "Graded", "Shipped Back", "Received Back"] as const;
+
+  const filtered = useMemo(() => {
+    if (!searchQuery.trim()) return submissions;
+    const q = searchQuery.toLowerCase();
+    return submissions.filter(s =>
+      s.cardName.toLowerCase().includes(q) ||
+      s.service.toLowerCase().includes(q) ||
+      s.status.toLowerCase().includes(q) ||
+      s.grade?.toLowerCase().includes(q)
+    );
+  }, [submissions, searchQuery]);
+
+  const totalInvested = submissions.reduce((sum, s) => sum + s.gradingCost + s.shippingCost + s.otherCosts, 0);
+  const completed = submissions.filter(s => s.status === "completed");
+  const avgTurnaround = completed.length > 0
+    ? completed.reduce((sum, s) => {
+        if (s.submissionDate && s.actualCompletion) {
+          return sum + (new Date(s.actualCompletion).getTime() - new Date(s.submissionDate).getTime()) / (1000 * 60 * 60 * 24);
+        }
+        return sum;
+      }, 0) / completed.length
+    : null;
+
+  if (submissions.length === 0 && !showAdd) {
+    return (
+      <EmptyState
+        icon={IconClipboard}
+        title="No grading submissions"
+        subtitle="Track PSA, BGS, CGC, and other grading submissions. Know exactly where your cards are and what they truly cost."
+        action={
+          <button onClick={() => setShowAdd(true)}
+            className="px-4 py-2 rounded-lg bg-primary text-bg text-sm font-bold hover:bg-primary/90 transition-colors">
+            Add Submission
+          </button>
+        }
+      />
+    );
+  }
+
+  return (
+    <div className="animate-fade-in-up">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h2 className="text-xl font-bold tracking-tight font-display">Grading Tracker</h2>
+          <p className="text-sm text-text-secondary font-mono">{filtered.length} of {submissions.length} submissions</p>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="relative">
+            <IconSearch className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-text-tertiary" />
+            <input type="text" value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+              placeholder="Search submissions..."
+              className="py-2 pl-8 pr-3 bg-bg border border-border rounded-lg text-xs outline-none focus:border-primary font-mono w-40" />
+          </div>
+          <button onClick={() => setShowAdd(!showAdd)}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg border border-border bg-surface-raised text-text-secondary hover:text-text text-sm font-semibold transition-all hover:border-text-secondary/50">
+            <IconPlus className="w-4 h-4" />
+            {showAdd ? "Cancel" : "Add"}
+          </button>
+        </div>
+      </div>
+
+      {/* Portfolio Summary */}
+      {submissions.length > 0 && (
+        <div className="glass rounded-2xl p-6 mb-6 flex flex-wrap gap-6">
+          <div>
+            <div className="text-[11px] font-bold text-text-secondary uppercase tracking-wider mb-1">Total Invested</div>
+            <div className="text-3xl font-bold text-text font-mono tabular-nums">${totalInvested.toFixed(2)}</div>
+            <div className="text-[10px] text-text-tertiary mt-0.5">grading + shipping + fees</div>
+          </div>
+          <div>
+            <div className="text-[11px] font-bold text-text-secondary uppercase tracking-wider mb-1">Active</div>
+            <div className="text-3xl font-bold text-primary font-mono tabular-nums">{submissions.filter(s=>s.status!=='completed'&&s.status!=='cancelled').length}</div>
+          </div>
+          <div>
+            <div className="text-[11px] font-bold text-text-secondary uppercase tracking-wider mb-1">Completed</div>
+            <div className="text-3xl font-bold text-emerald-400 font-mono tabular-nums">{completed.length}</div>
+          </div>
+          <div>
+            <div className="text-[11px] font-bold text-text-secondary uppercase tracking-wider mb-1">Avg Turnaround</div>
+            <div className="text-3xl font-bold text-text font-mono tabular-nums">{avgTurnaround!==null?`${Math.round(avgTurnaround)}d`:"—"}</div>
+          </div>
+        </div>
+      )}
+
+      {/* Add Form */}
+      {showAdd && (
+        <div className="glass rounded-2xl p-5 mb-6 space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label className="text-[10px] font-bold text-text-secondary uppercase tracking-wider mb-1 block">Card Name</label>
+              <input type="text" placeholder="e.g. Charizard Base Set 4/102"
+                className="w-full py-2 px-3 bg-bg border border-border rounded-lg text-sm outline-none focus:border-primary font-mono"
+                value={newItem.cardName || ""} onChange={e => setNewItem(p => ({ ...p, cardName: e.target.value }))} />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-text-secondary uppercase tracking-wider mb-1 block">Service</label>
+              <select
+                className="w-full py-2 px-3 bg-bg border border-border rounded-lg text-sm outline-none focus:border-primary font-mono"
+                value={newItem.service || "PSA"}
+                onChange={e => setNewItem(p => ({ ...p, service: e.target.value as GradingSubmission["service"] }))}>
+                {SERVICES.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-text-secondary uppercase tracking-wider mb-1 block">Service Level</label>
+              <input type="text" placeholder="e.g. Value, Express"
+                className="w-full py-2 px-3 bg-bg border border-border rounded-lg text-sm outline-none focus:border-primary font-mono"
+                value={newItem.serviceLevel || ""} onChange={e => setNewItem(p => ({ ...p, serviceLevel: e.target.value }))} />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-text-secondary uppercase tracking-wider mb-1 block">Declared Value ($)</label>
+              <input type="number" min={0} step={0.01}
+                className="w-full py-2 px-3 bg-bg border border-border rounded-lg text-sm outline-none focus:border-primary font-mono"
+                value={newItem.declaredValue || 0} onChange={e => setNewItem(p => ({ ...p, declaredValue: parseFloat(e.target.value) || 0 }))} />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-text-secondary uppercase tracking-wider mb-1 block">Grading Cost ($)</label>
+              <input type="number" min={0} step={0.01}
+                className="w-full py-2 px-3 bg-bg border border-border rounded-lg text-sm outline-none focus:border-primary font-mono"
+                value={newItem.gradingCost || 0} onChange={e => setNewItem(p => ({ ...p, gradingCost: parseFloat(e.target.value) || 0 }))} />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-text-secondary uppercase tracking-wider mb-1 block">Shipping Cost ($)</label>
+              <input type="number" min={0} step={0.01}
+                className="w-full py-2 px-3 bg-bg border border-border rounded-lg text-sm outline-none focus:border-primary font-mono"
+                value={newItem.shippingCost || 0} onChange={e => setNewItem(p => ({ ...p, shippingCost: parseFloat(e.target.value) || 0 }))} />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-text-secondary uppercase tracking-wider mb-1 block">Other Costs ($)</label>
+              <input type="number" min={0} step={0.01}
+                className="w-full py-2 px-3 bg-bg border border-border rounded-lg text-sm outline-none focus:border-primary font-mono"
+                value={newItem.otherCosts || 0} onChange={e => setNewItem(p => ({ ...p, otherCosts: parseFloat(e.target.value) || 0 }))} />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-text-secondary uppercase tracking-wider mb-1 block">Submission Date</label>
+              <input type="date"
+                className="w-full py-2 px-3 bg-bg border border-border rounded-lg text-sm outline-none focus:border-primary font-mono"
+                value={newItem.submissionDate || ""} onChange={e => setNewItem(p => ({ ...p, submissionDate: e.target.value }))} />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-text-secondary uppercase tracking-wider mb-1 block">Tracking #</label>
+              <input type="text" placeholder="optional"
+                className="w-full py-2 px-3 bg-bg border border-border rounded-lg text-sm outline-none focus:border-primary font-mono"
+                value={newItem.trackingNumber || ""} onChange={e => setNewItem(p => ({ ...p, trackingNumber: e.target.value }))} />
+            </div>
+            <div className="md:col-span-3">
+              <label className="text-[10px] font-bold text-text-secondary uppercase tracking-wider mb-1 block">Notes</label>
+              <input type="text" placeholder="e.g. Middleman via GameStop, bulk submission"
+                className="w-full py-2 px-3 bg-bg border border-border rounded-lg text-sm outline-none focus:border-primary font-mono"
+                value={newItem.notes || ""} onChange={e => setNewItem(p => ({ ...p, notes: e.target.value }))} />
+            </div>
+          </div>
+          <button onClick={() => {
+            if (!newItem.cardName) return;
+            onAdd({
+              cardName: newItem.cardName,
+              service: newItem.service || "PSA",
+              serviceLevel: newItem.serviceLevel || "Value",
+              declaredValue: newItem.declaredValue || 0,
+              gradingCost: newItem.gradingCost || 0,
+              shippingCost: newItem.shippingCost || 0,
+              otherCosts: newItem.otherCosts || 0,
+              submissionDate: newItem.submissionDate || new Date().toISOString().slice(0, 10),
+              trackingNumber: newItem.trackingNumber,
+              status: "pending",
+              currentStage: "Order Created",
+              stages: [{ name: "Order Created", date: new Date().toISOString().slice(0, 10) }],
+              notes: newItem.notes,
+            });
+            setNewItem({ service: "PSA", serviceLevel: "Value", status: "pending", stages: [], gradingCost: 0, shippingCost: 0, otherCosts: 0, declaredValue: 0 });
+            setShowAdd(false);
+          }}
+            className="px-4 py-2 rounded-lg bg-primary text-bg text-sm font-bold hover:bg-primary/90 transition-colors">
+            Save Submission
+          </button>
+        </div>
+      )}
+
+      {/* Submissions Grid */}
+      {submissions.length === 0 ? null : filtered.length === 0 ? (
+        <EmptyState icon={IconSearch} title="No matches" subtitle={`No submissions match "${searchQuery}".`} />
+      ) : (
+        <div className="grid grid-cols-1 gap-4">
+          {filtered.map(sub => {
+            const totalCost = sub.gradingCost + sub.shippingCost + sub.otherCosts;
+            const daysIn = sub.submissionDate ? Math.floor((Date.now() - new Date(sub.submissionDate).getTime()) / (1000 * 60 * 60 * 24)) : 0;
+            const linkedCard = sub.cardId ? collection.find(c => c.id === sub.cardId) : null;
+            const statusColors: Record<string, string> = {
+              pending: "text-yellow-400 border-yellow-500/20 bg-yellow-500/10",
+              in_transit: "text-amber-400 border-amber-500/20 bg-amber-500/10",
+              received: "text-blue-400 border-blue-500/20 bg-blue-500/10",
+              grading: "text-purple-400 border-purple-500/20 bg-purple-500/10",
+              completed: "text-emerald-400 border-emerald-500/20 bg-emerald-500/10",
+              lost: "text-rose-400 border-rose-500/20 bg-rose-500/10",
+              cancelled: "text-slate-400 border-slate-500/20 bg-slate-500/10",
+            };
+            return (
+              <div key={sub.id} className="glass rounded-2xl p-5 relative group">
+                <div className="flex items-start justify-between mb-3">
+                  <div className="flex items-start gap-3">
+                    {linkedCard?.imageSmall ? (
+                      <button onClick={() => sub.cardId && onCardClick(sub.cardId)}
+                        className="shrink-0 w-12 h-16 rounded-lg overflow-hidden bg-surface-raised border border-border hover:border-primary/40 transition-colors">
+                        <img src={linkedCard.imageSmall} alt={sub.cardName} className="w-full h-full object-contain" />
+                      </button>
+                    ) : (
+                      <div className="shrink-0 w-12 h-16 rounded-lg bg-surface-raised border border-border flex items-center justify-center">
+                        <IconClipboard className="w-5 h-5 text-text-tertiary" />
+                      </div>
+                    )}
+                    <div>
+                      <div className="text-sm font-bold">{sub.cardName}</div>
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border uppercase tracking-wider ${statusColors[sub.status] || statusColors.pending}`}>
+                          {sub.status.replace('_', ' ')}
+                        </span>
+                        <span className="text-[10px] text-text-secondary font-mono">{sub.service} · {sub.serviceLevel}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <button onClick={() => onRemove(sub.id)}
+                    className="w-7 h-7 rounded-lg bg-surface/80 backdrop-blur border border-border flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all hover:border-rose-500/50 hover:text-rose-400">
+                    <IconX className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                  <div>
+                    <div className="text-[10px] text-text-tertiary uppercase tracking-wider">Total Cost</div>
+                    <div className="text-sm font-bold font-mono">${totalCost.toFixed(2)}</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-text-tertiary uppercase tracking-wider">Declared Value</div>
+                    <div className="text-sm font-bold font-mono">${sub.declaredValue.toFixed(2)}</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-text-tertiary uppercase tracking-wider">Days In</div>
+                    <div className="text-sm font-bold font-mono">{daysIn}d</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-text-tertiary uppercase tracking-wider">Current Stage</div>
+                    <div className="text-sm font-bold font-mono text-primary">{sub.currentStage}</div>
+                  </div>
+                </div>
+
+                {/* Stage Timeline */}
+                {sub.stages.length > 0 && (
+                  <div className="flex items-center gap-1 mb-3 overflow-x-auto pb-1">
+                    {sub.stages.map((stage, i) => (
+                      <div key={i} className="flex items-center gap-1 shrink-0">
+                        <div className="px-2 py-1 rounded-md bg-surface-raised border border-border text-[10px] font-mono text-text-secondary">
+                          {stage.name}
+                        </div>
+                        {i < sub.stages.length - 1 && (
+                          <IconChevronRight className="w-3 h-3 text-text-tertiary shrink-0" />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Grade Result */}
+                {sub.grade && (
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider">Grade</span>
+                    <span className="text-sm font-bold text-emerald-400 font-mono">{sub.grade}</span>
+                    {sub.certNumber && <span className="text-[10px] text-text-tertiary font-mono">#{sub.certNumber}</span>}
+                  </div>
+                )}
+
+                {/* Inline updates */}
+                <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-all flex-wrap">
+                  <select
+                    value={sub.status}
+                    onChange={e => onUpdate(sub.id, { status: e.target.value as GradingSubmission['status'] })}
+                    className="text-[9px] px-1.5 py-0.5 rounded bg-surface/90 border border-border font-mono cursor-pointer hover:border-primary/50"
+                  >
+                    {STATUSES.map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
+                  </select>
+                  <select
+                    value={sub.currentStage}
+                    onChange={e => {
+                      const stageName = e.target.value;
+                      const newStages = [...sub.stages, { name: stageName, date: new Date().toISOString().slice(0, 10) }];
+                      onUpdate(sub.id, { currentStage: stageName, stages: newStages });
+                    }}
+                    className="text-[9px] px-1.5 py-0.5 rounded bg-surface/90 border border-border font-mono cursor-pointer hover:border-primary/50"
+                  >
+                    {STAGE_NAMES.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                  <input type="text" placeholder="Grade (e.g. PSA 10)"
+                    className="text-[9px] px-1.5 py-0.5 rounded bg-surface/90 border border-border font-mono w-20"
+                    value={sub.grade || ""}
+                    onChange={e => onUpdate(sub.id, { grade: e.target.value || undefined })}
+                  />
+                  <input type="text" placeholder="Cert #"
+                    className="text-[9px] px-1.5 py-0.5 rounded bg-surface/90 border border-border font-mono w-20"
+                    value={sub.certNumber || ""}
+                    onChange={e => onUpdate(sub.id, { certNumber: e.target.value || undefined })}
+                  />
+                </div>
+
+                {sub.notes && (
+                  <div className="mt-2 text-[11px] text-text-tertiary italic">{sub.notes}</div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ═══════════════════════════════════════
    MAIN
    ═══════════════════════════════════════ */
@@ -1325,6 +1698,7 @@ export default function Home() {
   const [collection, setCollection] = useState<CollectionItem[]>([]);
   const [sealedVault, setSealedVault] = useState<SealedItem[]>([]);
   const [stories, setStories] = useState<CardStory[]>([]);
+  const [gradingSubmissions, setGradingSubmissions] = useState<GradingSubmission[]>([]);
   const [recentlyViewed, setRecentlyViewed] = useState<SavedCard[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(-1);
   const [currency, setCurrency] = useState<Currency>("USD");
@@ -1382,6 +1756,8 @@ export default function Home() {
       if (s) setSealedVault(JSON.parse(s));
       const st = localStorage.getItem("pokeprice_stories_v1");
       if (st) setStories(JSON.parse(st));
+      const g = localStorage.getItem("pokeprice_grading_v1");
+      if (g) setGradingSubmissions(JSON.parse(g));
       if (r) setRecentlyViewed(JSON.parse(r));
       if (cur === 'USD' || cur === 'CAD') setCurrency(cur);
     } catch {}
@@ -1407,6 +1783,7 @@ export default function Home() {
   useEffect(()=>{ localStorage.setItem("pokeprice_collection_v2", JSON.stringify(collection)); },[collection]);
   useEffect(()=>{ localStorage.setItem("pokeprice_sealed_v1", JSON.stringify(sealedVault)); },[sealedVault]);
   useEffect(()=>{ localStorage.setItem("pokeprice_stories_v1", JSON.stringify(stories)); },[stories]);
+  useEffect(()=>{ localStorage.setItem("pokeprice_grading_v1", JSON.stringify(gradingSubmissions)); },[gradingSubmissions]);
   useEffect(()=>{ localStorage.setItem("pokeprice_recent_v1", JSON.stringify(recentlyViewed)); },[recentlyViewed]);
   useEffect(()=>{ localStorage.setItem("pokeprice_currency_v1", currency); },[currency]);
 
@@ -1623,12 +2000,21 @@ export default function Home() {
   };
   const removeStory = (cardId: string) => setStories(prev => prev.filter(s => s.id !== cardId));
 
+  const addGradingSubmission = (item: Omit<GradingSubmission, "id">)=>{
+    setGradingSubmissions(prev=>[...prev, { ...item, id: safeId() }]);
+  };
+  const removeGradingSubmission = (id:string)=> setGradingSubmissions(prev=>prev.filter(p=>p.id!==id));
+  const updateGradingSubmission = (id:string, updates:Partial<GradingSubmission>)=>{
+    setGradingSubmissions(prev=>prev.map(p=>p.id===id?{...p,...updates}:p));
+  };
+
   /* Sidebar nav items */
   const navItems: { id: View; label: string; icon: IconComponent; badge?: number }[] = [
     { id: "home", label: "Discover", icon: IconLightning },
     { id: "watchlist", label: "Watchlist", icon: IconStar, badge: watchlist.length },
     { id: "collection", label: "Collection", icon: IconPackage, badge: collection.length },
     { id: "stories", label: "Stories", icon: IconBook, badge: stories.length },
+    { id: "grading", label: "Grading Tracker", icon: IconClipboard, badge: gradingSubmissions.length },
     { id: "sealed", label: "Sealed Vault", icon: IconShield, badge: sealedVault.length },
   ];
 
@@ -1796,6 +2182,20 @@ export default function Home() {
               </p>
             </div>
           )}
+
+          {view==="grading" && (
+            <div className="animate-fade-in">
+              <h3 className="text-[10px] font-bold text-text-tertiary uppercase tracking-wider mb-2 font-display">Summary</h3>
+              <div className="space-y-1.5">
+                <div className="flex justify-between text-xs"><span className="text-text-secondary">Submissions</span><span className="font-mono">{gradingSubmissions.length}</span></div>
+                <div className="flex justify-between text-xs"><span className="text-text-secondary">In Grading</span><span className="font-mono">{gradingSubmissions.filter(s=>s.status==='grading'||s.status==='received').length}</span></div>
+                <div className="flex justify-between text-xs"><span className="text-text-secondary">Completed</span><span className="font-mono">{gradingSubmissions.filter(s=>s.status==='completed').length}</span></div>
+              </div>
+              <p className="text-[11px] text-text-tertiary mt-3 leading-relaxed">
+                Track PSA, BGS, CGC, and other grading submissions from start to finish.
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Currency Toggle */}
@@ -1908,6 +2308,7 @@ export default function Home() {
           {view==="collection" && <CollectionView collection={collection} onCardClick={loadDetail} onRemove={removeFromCollection} onUpdateItem={updateCollectionItem} stories={stories} />}
           {view==="sealed" && <SealedVaultView items={sealedVault} onAdd={addSealedItem} onRemove={removeSealedItem} onUpdate={updateSealedItem} />}
           {view==="stories" && <StoriesView stories={stories} collection={collection} onCardClick={loadDetail} onRemove={removeStory} />}
+          {view==="grading" && <GradingTrackerView submissions={gradingSubmissions} collection={collection} onAdd={addGradingSubmission} onRemove={removeGradingSubmission} onUpdate={updateGradingSubmission} onCardClick={loadDetail} />}
         </div>
       </main>
     </div>

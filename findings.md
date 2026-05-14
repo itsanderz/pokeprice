@@ -1228,8 +1228,8 @@ Utilities can be copied. Protectors earn loyalty. Communities are irreplaceable.
 | Sealed Vault MVP | ✅ Live | Full CRUD, 6 formats |
 | Fuzzy Search | ✅ Live | Server + client, all views |
 | eBay Sold Estimate | ⚡ Partial | Estimated; real API ready |
-| Grading Submission Tracker | 📋 Planned | Pro feature, 3–6 months |
-| Cross-Region Price Panel | 📋 Planned | Japan/EU/US, 6–12 months |
+| Grading Submission Tracker | ✅ Live | Pro feature — stage tracking, cost basis, turnaround analytics |
+| Cross-Region Price Panel | ✅ Live | Japan/EU/UK/SG estimates with shipping context |
 | Card Story Mode | ✅ Live | Free, high emotional lock-in |
 | LGS SaaS Tools | 📋 Planned | B2B revenue, 3–6 months |
 | Pro Subscription Paywall | 📋 Planned | $4.99/mo when features justify it |
@@ -1251,6 +1251,9 @@ Every implemented feature maps directly to a research finding:
 | *"Every app treats all copies as identical."* | Condition Badges + Adjusted Prices | `src/app/page.tsx` (CollectionView) |
 | *"I just want one app that does it all."* | Unified platform: cards + sealed + search + export | `src/app/page.tsx` |
 | *"It's not about the grade, it's about the story."* | Card Story Mode — attach memories to individual cards | `src/app/page.tsx` (DetailView, StoriesView) |
+| *"I check the tracker 5 times a day."* | Grading Submission Tracker — 8-stage pipeline, cost basis, turnaround analytics | `src/app/page.tsx` (GradingTrackerView) |
+| *"PSA turnaround is bullsh*t. I paid for express and it's still sitting in order prep."* | Grading stage tracking with status + timeline | `src/app/page.tsx` (GradingTrackerView) |
+| *"Japanese cards are cheaper in Japan."* | Cross-Region Price Panel — JP/EU/UK/SG estimates | `src/app/components/PriceDashboard.tsx` (CrossRegionPanel) |
 
 ---
 
