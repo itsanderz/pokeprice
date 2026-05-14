@@ -14,6 +14,8 @@ import {
 import Card3D from "./components/Card3D";
 import Sparkline from "./components/Sparkline";
 import PriceDashboard from "./components/PriceDashboard";
+import { POKEMON_NAMES } from "@/lib/pokemon-names";
+import { convertToCad, type Currency } from "@/lib/pricing";
 
 /* ═══════════════════════════════════════
    TYPES
@@ -30,18 +32,7 @@ interface Card {
   cardmarket?: { prices?: Record<string, number>; updatedAt?: string; url?: string };
   _pokeprice?: {
     ebaySoldAvg?: number;
-    unified?: {
-      tcgplayerMarket: number | null;
-      tcgplayerLow: number | null;
-      tcgplayerHigh: number | null;
-      tcgplayerMid: number | null;
-      cardmarketTrend: number | null;
-      cardmarketAvg7: number | null;
-      cardmarketAvg30: number | null;
-      ebaySoldAvg: number | null;
-      consensus: number | null;
-      realizable: number | null;
-    };
+    unified?: import("@/lib/pricing").UnifiedPrices;
   };
 }
 interface SavedCard {
@@ -478,10 +469,11 @@ function SearchView({ cards, loading, total, query, onCardClick, selectedIndex, 
   );
 }
 
-function DetailView({ card, activeVariant, setActiveVariant, onBack, watchlist, onToggleWatchlist, collection, onAddToCollection }: {
+function DetailView({ card, activeVariant, setActiveVariant, onBack, watchlist, onToggleWatchlist, collection, onAddToCollection, currency }: {
   card:Card; activeVariant:string; setActiveVariant:(v:string)=>void; onBack:()=>void;
   watchlist:SavedCard[]; onToggleWatchlist:(c:Card)=>void;
   collection:CollectionItem[]; onAddToCollection:(c:Card)=>void;
+  currency: Currency;
 }) {
   const prices = card.tcgplayer?.prices?.[activeVariant];
   const cm = card.cardmarket?.prices;
@@ -496,6 +488,12 @@ function DetailView({ card, activeVariant, setActiveVariant, onBack, watchlist, 
   const holo = isHolographic(card);
   const ebaySold = card._pokeprice?.ebaySoldAvg ?? null;
   const realizable = card._pokeprice?.unified?.realizable ?? getRealizablePrice(market || null);
+
+  // Currency-converted display values
+  const dMarket = currency === 'CAD' ? convertToCad(market ?? null) : (market ?? null);
+  const dEbay = currency === 'CAD' ? convertToCad(ebaySold ?? null) : (ebaySold ?? null);
+  const dReal = currency === 'CAD' ? convertToCad(realizable ?? null) : (realizable ?? null);
+  const sym = currency === 'CAD' ? 'C$' : '$';
 
   return (
     <div className="animate-fade-in-up max-w-5xl">
@@ -548,23 +546,23 @@ function DetailView({ card, activeVariant, setActiveVariant, onBack, watchlist, 
             <div>
               <div className="text-[11px] font-bold text-text-secondary uppercase tracking-wider mb-1">Market Price</div>
               <div className="text-4xl md:text-5xl font-bold text-primary font-mono tabular-nums tracking-tight">
-                {market?`$${market.toFixed(2)}`:"—"}
+                {dMarket?`${sym}${dMarket.toFixed(2)}`:"—"}
               </div>
             </div>
-            {ebaySold !== null && (
+            {dEbay !== null && (
               <div className="pb-1">
                 <div className="text-[11px] font-bold text-amber-400 uppercase tracking-wider mb-1">eBay Sold Avg</div>
                 <div className="text-xl font-bold text-amber-400 font-mono tabular-nums">
-                  ${ebaySold.toFixed(2)}
+                  {sym}{dEbay.toFixed(2)}
                 </div>
                 <div className="text-[10px] text-text-tertiary">estimated from sold listings</div>
               </div>
             )}
-            {realizable !== null && (
+            {dReal !== null && (
               <div className="pb-1">
                 <div className="text-[11px] font-bold text-text-tertiary uppercase tracking-wider mb-1">You'll Get ≈</div>
                 <div className="text-xl font-bold text-text-secondary font-mono tabular-nums">
-                  ${realizable.toFixed(2)}
+                  {sym}{dReal.toFixed(2)}
                 </div>
                 <div className="text-[10px] text-text-tertiary">after typical 13% resale fees</div>
               </div>
@@ -604,7 +602,7 @@ function DetailView({ card, activeVariant, setActiveVariant, onBack, watchlist, 
         </div>
       </div>
 
-      <PriceDashboard card={card} activeVariant={activeVariant} />
+      <PriceDashboard card={card} activeVariant={activeVariant} currency={currency} />
 
       {updated && <p className="text-right text-[11px] text-text-tertiary font-mono mt-4">Prices updated: {updated}</p>}
     </div>
@@ -1114,6 +1112,9 @@ export default function Home() {
   const [sealedVault, setSealedVault] = useState<SealedItem[]>([]);
   const [recentlyViewed, setRecentlyViewed] = useState<SavedCard[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(-1);
+  const [currency, setCurrency] = useState<Currency>("USD");
+  const [searchSuggestions, setSearchSuggestions] = useState<string[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const debounce = useRef<ReturnType<typeof setTimeout>>(undefined);
 
@@ -1125,6 +1126,7 @@ export default function Home() {
       const c = localStorage.getItem("pokeprice_collection_v2") || localStorage.getItem("pokeprice_collection_v1");
       const s = localStorage.getItem("pokeprice_sealed_v1");
       const r = localStorage.getItem("pokeprice_recent_v1");
+      const cur = localStorage.getItem("pokeprice_currency_v1");
       if (w) setWatchlist(JSON.parse(w));
       if (c) {
         const parsed = JSON.parse(c) as CollectionItem[];
@@ -1136,6 +1138,7 @@ export default function Home() {
       }
       if (s) setSealedVault(JSON.parse(s));
       if (r) setRecentlyViewed(JSON.parse(r));
+      if (cur === 'USD' || cur === 'CAD') setCurrency(cur);
     } catch {}
   },[]);
 
@@ -1144,6 +1147,21 @@ export default function Home() {
   useEffect(()=>{ localStorage.setItem("pokeprice_collection_v2", JSON.stringify(collection)); },[collection]);
   useEffect(()=>{ localStorage.setItem("pokeprice_sealed_v1", JSON.stringify(sealedVault)); },[sealedVault]);
   useEffect(()=>{ localStorage.setItem("pokeprice_recent_v1", JSON.stringify(recentlyViewed)); },[recentlyViewed]);
+  useEffect(()=>{ localStorage.setItem("pokeprice_currency_v1", currency); },[currency]);
+
+  /* Search autocomplete using Pokemon name dictionary */
+  useEffect(()=>{
+    const q = query.trim();
+    if (q.length < 2 || q.startsWith('#') || /^\d/.test(q)) {
+      setSearchSuggestions([]);
+      setShowSuggestions(false);
+      return;
+    }
+    const fuse = new Fuse(POKEMON_NAMES, { threshold: 0.3, distance: 50, ignoreLocation: true });
+    const results = fuse.search(q).slice(0, 6).map(r => r.item);
+    setSearchSuggestions(results);
+    setShowSuggestions(results.length > 0);
+  },[query]);
 
   /* Load trending */
   useEffect(()=>{
@@ -1187,12 +1205,28 @@ export default function Home() {
     return ()=>window.removeEventListener("keydown",handleKey);
   },[view,cards,selectedIndex,query,selected]);
 
-  /* Debounced search */
+  /* Debounced search with card number pattern detection */
   const search = useCallback(async(q:string)=>{
     if (q.length<2) { setCards([]); setTotal(0); setView("home"); return; }
-    setLoading(true); setView("search"); setSelectedIndex(-1);
+    setLoading(true); setView("search"); setSelectedIndex(-1); setShowSuggestions(false);
+
+    // Detect card number patterns: "4/102", "#105", "Charizard ex 105"
+    let apiQuery = q;
+    const numberMatch = q.match(/^(\d+)\/\d+$/); // "4/102" → search by number
+    const hashNumberMatch = q.match(/^#(\d+)$/); // "#105" → search by number
+    const suffixNumberMatch = q.match(/(.+?)\s+(?:ex|V|VMAX|VSTAR)?\s*(\d+)$/i); // "Charizard ex 105"
+
+    if (numberMatch) {
+      apiQuery = `number:${numberMatch[1]}`;
+    } else if (hashNumberMatch) {
+      apiQuery = `number:${hashNumberMatch[1]}`;
+    } else if (suffixNumberMatch && !suffixNumberMatch[1].trim().match(/^(ex|V|VMAX|VSTAR)$/i)) {
+      // "Charizard ex 105" → search name + number
+      apiQuery = `name:"${suffixNumberMatch[1].trim()}" number:${suffixNumberMatch[2]}`;
+    }
+
     try {
-      const resp = await fetch(`/api/cards?q=${encodeURIComponent(q)}&limit=24`);
+      const resp = await fetch(`/api/cards?q=${encodeURIComponent(apiQuery)}&limit=24`);
       const data = await resp.json();
       setCards(data.data||[]); setTotal(data.totalCount||0);
     } catch { setCards([]); }
@@ -1287,16 +1321,35 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Search */}
+        {/* Search with Autocomplete */}
         <div className="p-4">
           <div className="relative group">
-            <IconSearch className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-tertiary group-focus-within:text-primary transition-colors" />
-            <input ref={searchRef} type="text" value={query} onChange={e=>setQuery(e.target.value)}
+            <IconSearch className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-tertiary group-focus-within:text-primary transition-colors z-10" />
+            <input ref={searchRef} type="text" value={query} onChange={e=>{setQuery(e.target.value); setShowSuggestions(true);}}
+              onFocus={()=>query.trim().length>=2 && setShowSuggestions(searchSuggestions.length>0)}
+              onBlur={()=>setTimeout(()=>setShowSuggestions(false),150)}
               placeholder="Search cards..."
               className="w-full py-2.5 pl-9 pr-16 bg-bg border border-border rounded-lg text-sm outline-none transition-all focus:border-primary focus:ring-1 focus:ring-primary/20 placeholder:text-text-tertiary/60 font-mono text-xs" />
             <div className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-text-tertiary font-mono border border-border rounded px-1.5 py-0.5">
               ⌘K
             </div>
+
+            {/* Autocomplete Dropdown */}
+            {showSuggestions && searchSuggestions.length > 0 && (
+              <div className="absolute top-full left-0 right-0 mt-1 bg-surface border border-border rounded-lg shadow-xl z-50 overflow-hidden">
+                {searchSuggestions.map((suggestion, i) => (
+                  <button
+                    key={suggestion}
+                    onMouseDown={()=>{setQuery(suggestion); setShowSuggestions(false); searchRef.current?.focus();}}
+                    className={`w-full text-left px-3 py-2 text-xs font-mono hover:bg-primary/10 hover:text-primary transition-colors ${i===0?'border-t-0':'border-t border-border/50'}`}>
+                    <span className="text-text-secondary">{suggestion}</span>
+                  </button>
+                ))}
+                <div className="px-3 py-1.5 text-[10px] text-text-tertiary border-t border-border/50 bg-surface-raised">
+                  Try: <span className="font-mono text-text-secondary">#105</span>, <span className="font-mono text-text-secondary">4/102</span>, or <span className="font-mono text-text-secondary">Charizard ex 105</span>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -1406,9 +1459,27 @@ export default function Home() {
           )}
         </div>
 
+        {/* Currency Toggle */}
+        <div className="px-4 py-3 border-t border-border">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] text-text-tertiary font-mono uppercase tracking-wider">Currency</span>
+            <div className="flex bg-surface-raised rounded-lg border border-border overflow-hidden">
+              <button onClick={()=>setCurrency('USD')}
+                className={`px-2.5 py-1 text-[10px] font-mono font-bold transition-all ${currency==='USD'?'bg-primary text-bg':'text-text-secondary hover:text-text'}`}>
+                USD
+              </button>
+              <button onClick={()=>setCurrency('CAD')}
+                className={`px-2.5 py-1 text-[10px] font-mono font-bold transition-all ${currency==='CAD'?'bg-primary text-bg':'text-text-secondary hover:text-text'}`}>
+                CAD
+              </button>
+            </div>
+          </div>
+        </div>
+
         {/* Footer */}
         <div className="px-4 py-3 border-t border-border text-[10px] text-text-tertiary font-mono">
           <p>Data via pokemontcg.io</p>
+          <p className="mt-0.5">COLLECTR CAD via EB Games (est.)</p>
         </div>
       </aside>
 
@@ -1431,7 +1502,7 @@ export default function Home() {
         <div className="relative max-w-6xl mx-auto">
           {view==="home" && <HomeView trending={trending} trendingLoaded={trendingLoaded} onCardClick={loadDetail} onSetClick={setQuery} watchlist={watchlist} onToggleWatchlist={toggleWatchlist} />}
           {view==="search" && <SearchView cards={cards} loading={loading} total={total} query={query} onCardClick={loadDetail} selectedIndex={selectedIndex} watchlist={watchlist} onToggleWatchlist={toggleWatchlist} />}
-          {view==="detail" && selected && <DetailView card={selected} activeVariant={activeVariant} setActiveVariant={setActiveVariant} onBack={goBack} watchlist={watchlist} onToggleWatchlist={toggleWatchlist} collection={collection} onAddToCollection={addToCollection} />}
+          {view==="detail" && selected && <DetailView card={selected} activeVariant={activeVariant} setActiveVariant={setActiveVariant} onBack={goBack} watchlist={watchlist} onToggleWatchlist={toggleWatchlist} collection={collection} onAddToCollection={addToCollection} currency={currency} />}
           {view==="watchlist" && <WatchlistView watchlist={watchlist} onCardClick={loadDetail} onRemove={removeFromWatchlist} />}
           {view==="collection" && <CollectionView collection={collection} onCardClick={loadDetail} onRemove={removeFromCollection} onUpdateItem={updateCollectionItem} />}
           {view==="sealed" && <SealedVaultView items={sealedVault} onAdd={addSealedItem} onRemove={removeSealedItem} onUpdate={updateSealedItem} />}

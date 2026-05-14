@@ -5,9 +5,12 @@
  * - TCGPlayer (primary USD market)
  * - Cardmarket (primary EUR market)
  * - eBay Sold Average (estimated until real API connected)
+ * - COLLECTR (CAD reference — EB Games partnership; estimated until API available)
  * 
  * All calculations are deterministic and clearly labeled.
  */
+
+export type Currency = 'USD' | 'CAD';
 
 export interface UnifiedPrices {
   tcgplayerMarket: number | null;
@@ -18,11 +21,29 @@ export interface UnifiedPrices {
   cardmarketAvg7: number | null;
   cardmarketAvg30: number | null;
   ebaySoldAvg: number | null;     // Estimated until eBay API connected
+  collectrCad: number | null;     // Estimated from TCGPlayer + CAD conversion until COLLECTR API
   consensus: number | null;        // Mean of available sources
   realizable: number | null;       // consensus * 0.87 (after ~13% fees)
 }
 
 const EUR_TO_USD = 1.08;
+export const USD_TO_CAD = 1.36; // Approximate — in production, fetch live rate
+
+export function convertToCad(usd: number | null): number | null {
+  if (usd === null) return null;
+  return usd * USD_TO_CAD;
+}
+
+export function convertFromCad(cad: number | null): number | null {
+  if (cad === null) return null;
+  return cad / USD_TO_CAD;
+}
+
+export function formatCurrency(value: number | null, currency: Currency): string {
+  if (value === null || value === undefined) return '—';
+  const sym = currency === 'CAD' ? 'C$' : '$';
+  return `${sym}${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
 
 export function buildUnifiedPrices(
   tcgplayerPrices?: {
@@ -49,6 +70,10 @@ export function buildUnifiedPrices(
 
   const ebay = ebaySoldAvg ?? null;
 
+  // COLLECTR CAD estimate: derived from TCGPlayer market converted to CAD
+  // When COLLECTR API becomes available, replace this with real data
+  const collectrCad = convertToCad(tcgMarket);
+
   // Consensus = average of all available USD-equivalent sources
   const sources: number[] = [];
   if (tcgMarket !== null) sources.push(tcgMarket);
@@ -71,6 +96,7 @@ export function buildUnifiedPrices(
     cardmarketAvg7: cmAvg7,
     cardmarketAvg30: cmAvg30,
     ebaySoldAvg: ebay,
+    collectrCad,
     consensus,
     realizable,
   };

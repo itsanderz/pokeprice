@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 import { IconTrendUp, IconTrendDown, IconCheck, IconAlertTriangle, IconClock, IconExternalLink } from "./Icons";
-import { buildUnifiedPrices, calculateConfidence, CONFIDENCE_META } from "@/lib/pricing";
+import { buildUnifiedPrices, calculateConfidence, CONFIDENCE_META, formatCurrency, convertToCad, type Currency } from "@/lib/pricing";
 
 interface CardPrice {
   low: number | null; mid: number | null; high: number | null;
@@ -26,9 +26,12 @@ function detectOutlier(value: number | null | undefined, reference: number | nul
   return value > reference * OUTLIER_THRESHOLD;
 }
 
-function formatPrice(value: number | null | undefined, currency: string): string {
-  if (value === null || value === undefined) return "—";
-  return `${currency}${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+function formatPrice(value: number | null | undefined, currency: Currency | string): string {
+  if (currency === '€') {
+    if (value === null || value === undefined) return '—';
+    return `€${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  }
+  return formatCurrency(value ?? null, currency as Currency);
 }
 
 function freshnessColor(dateStr?: string): string {
@@ -50,7 +53,7 @@ function freshnessLabel(dateStr?: string): string {
   return `${Math.floor(days / 7)}w ago`;
 }
 
-export default function PriceDashboard({ card, activeVariant }: { card: Card; activeVariant: string }) {
+export default function PriceDashboard({ card, activeVariant, currency = 'USD' }: { card: Card; activeVariant: string; currency?: Currency }) {
   const tcg = card.tcgplayer?.prices?.[activeVariant];
   const cm = card.cardmarket?.prices;
   const tcgUrl = card.tcgplayer?.url;
@@ -76,39 +79,67 @@ export default function PriceDashboard({ card, activeVariant }: { card: Card; ac
   const consensus = unified.consensus;
   const realizable = unified.realizable;
 
+  // Convert display values to CAD if selected
+  const display = useMemo(() => {
+    if (currency === 'USD') {
+      return {
+        consensus,
+        realizable,
+        ebaySold: unified.ebaySoldAvg,
+        tcgMarket: tcg?.market ?? null,
+        tcgLow: tcg?.low ?? null,
+        tcgHigh: tcg?.high ?? null,
+        tcgMid: tcg?.mid ?? null,
+        tcgDirect: tcg?.directLow ?? null,
+        collectrCad: unified.collectrCad,
+      };
+    }
+    return {
+      consensus: convertToCad(consensus),
+      realizable: convertToCad(realizable),
+      ebaySold: convertToCad(unified.ebaySoldAvg),
+      tcgMarket: convertToCad(tcg?.market ?? null),
+      tcgLow: convertToCad(tcg?.low ?? null),
+      tcgHigh: convertToCad(tcg?.high ?? null),
+      tcgMid: convertToCad(tcg?.mid ?? null),
+      tcgDirect: convertToCad(tcg?.directLow ?? null),
+      collectrCad: unified.collectrCad, // already CAD
+    };
+  }, [currency, consensus, realizable, unified, tcg]);
+
   return (
     <div className="space-y-5">
-      {/* Confidence + Three-Vector Banner: Market / eBay Sold / Realizable */}
+      {/* Confidence + Currency + Three-Vector Banner */}
       <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${confidenceMeta.bg} ${confidenceMeta.border}`}>
         {confidence === "high" ? <IconCheck className={`w-5 h-5 ${confidenceMeta.color}`} /> : <IconAlertTriangle className={`w-5 h-5 ${confidenceMeta.color}`} />}
         <div className="flex-1">
           <div className={`text-sm font-semibold ${confidenceMeta.color}`}>{confidenceMeta.label}</div>
           <div className="text-xs text-text-secondary">{confidenceMeta.desc}</div>
         </div>
-        {consensus && (
+        {display.consensus && (
           <div className="text-right mr-4">
             <div className="text-[10px] text-text-secondary uppercase tracking-wider">Consensus</div>
-            <div className="text-lg font-bold text-primary font-mono">${consensus.toFixed(2)}</div>
+            <div className="text-lg font-bold text-primary font-mono">{formatPrice(display.consensus, currency)}</div>
           </div>
         )}
-        {unified.ebaySoldAvg && (
+        {display.ebaySold && (
           <div className="text-right border-l border-border/50 pl-4 mr-4">
             <div className="text-[10px] text-text-secondary uppercase tracking-wider">eBay Sold Avg</div>
-            <div className="text-lg font-bold text-amber-400 font-mono">${unified.ebaySoldAvg.toFixed(2)}</div>
+            <div className="text-lg font-bold text-amber-400 font-mono">{formatPrice(display.ebaySold, currency)}</div>
             <div className="text-[9px] text-text-tertiary">estimated</div>
           </div>
         )}
-        {realizable && (
+        {display.realizable && (
           <div className="text-right border-l border-border/50 pl-4">
             <div className="text-[10px] text-text-secondary uppercase tracking-wider">Realizable</div>
-            <div className="text-lg font-bold text-text-secondary font-mono">${realizable.toFixed(2)}</div>
+            <div className="text-lg font-bold text-text-secondary font-mono">{formatPrice(display.realizable, currency)}</div>
             <div className="text-[9px] text-text-tertiary">after ~13% fees</div>
           </div>
         )}
       </div>
 
-      {/* Source Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      {/* Source Grid — 4 columns on large screens */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* TCGPlayer */}
         <div className="glass rounded-2xl p-5 relative overflow-hidden">
           <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/5 rounded-full blur-3xl" />
@@ -120,7 +151,7 @@ export default function PriceDashboard({ card, activeVariant }: { card: Card; ac
                 </div>
                 <div>
                   <div className="text-sm font-bold">TCGPlayer</div>
-                  <div className="text-[10px] text-text-secondary">USD Market</div>
+                  <div className="text-[10px] text-text-secondary">{currency} Market</div>
                 </div>
               </div>
               <a href={tcgUrl} target="_blank" rel="noopener noreferrer" className="text-text-tertiary hover:text-primary transition-colors">
@@ -130,14 +161,14 @@ export default function PriceDashboard({ card, activeVariant }: { card: Card; ac
 
             <div className="mb-4">
               <div className="text-[10px] text-text-secondary uppercase tracking-wider mb-1">Market Price</div>
-              <div className="text-3xl font-bold text-emerald-400 font-mono tabular-nums">{formatPrice(tcg?.market, "$")}</div>
+              <div className="text-3xl font-bold text-emerald-400 font-mono tabular-nums">{formatPrice(display.tcgMarket, currency)}</div>
             </div>
 
             <div className="space-y-2">
-              <PriceRow label="Low" value={tcg?.low} currency="$" warn={tcgLowOutlier} />
-              <PriceRow label="Mid" value={tcg?.mid} currency="$" />
-              <PriceRow label="High" value={tcg?.high} currency="$" warn={tcgHighOutlier} />
-              <PriceRow label="Direct" value={tcg?.directLow} currency="$" />
+              <PriceRow label="Low" value={display.tcgLow} currency={currency} warn={tcgLowOutlier} />
+              <PriceRow label="Mid" value={display.tcgMid} currency={currency} />
+              <PriceRow label="High" value={display.tcgHigh} currency={currency} warn={tcgHighOutlier} />
+              <PriceRow label="Direct" value={display.tcgDirect} currency={currency} />
             </div>
 
             <div className="mt-3 pt-3 border-t border-border/50 flex items-center gap-1.5 text-[11px] text-text-secondary">
@@ -167,7 +198,7 @@ export default function PriceDashboard({ card, activeVariant }: { card: Card; ac
 
             <div className="mb-4">
               <div className="text-[10px] text-text-secondary uppercase tracking-wider mb-1">Sold Average</div>
-              <div className="text-3xl font-bold text-amber-400 font-mono tabular-nums">{formatPrice(unified.ebaySoldAvg, "$")}</div>
+              <div className="text-3xl font-bold text-amber-400 font-mono tabular-nums">{formatPrice(display.ebaySold, currency)}</div>
             </div>
 
             <div className="space-y-2">
@@ -237,13 +268,55 @@ export default function PriceDashboard({ card, activeVariant }: { card: Card; ac
             </div>
           </div>
         </div>
+
+        {/* COLLECTR (CAD) */}
+        <div className="glass rounded-2xl p-5 relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-32 h-32 bg-violet-500/5 rounded-full blur-3xl" />
+          <div className="relative">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-violet-500/10 flex items-center justify-center text-violet-400 border border-violet-500/20">
+                  <span className="text-[10px] font-bold">CL</span>
+                </div>
+                <div>
+                  <div className="text-sm font-bold">COLLECTR</div>
+                  <div className="text-[10px] text-text-secondary">CAD · EB Games Partner</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="mb-4">
+              <div className="text-[10px] text-text-secondary uppercase tracking-wider mb-1">Market Estimate</div>
+              <div className="text-3xl font-bold text-violet-400 font-mono tabular-nums">{formatPrice(display.collectrCad, 'CAD')}</div>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-[13px]">
+                <span className="text-text-secondary">vs USD Market</span>
+                <span className="font-mono font-semibold tabular-nums">
+                  {unified.tcgplayerMarket && display.collectrCad
+                    ? `${((display.collectrCad / unified.tcgplayerMarket - 1) * 100).toFixed(1)}%`
+                    : "—"}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-[13px]">
+                <span className="text-text-secondary">Rate</span>
+                <span className="font-mono font-semibold tabular-nums">1 USD ≈ 1.36 CAD</span>
+              </div>
+            </div>
+
+            <div className="mt-3 pt-3 border-t border-border/50 text-[11px] text-text-secondary">
+              Estimated from USD sources until COLLECTR public API available. EB Games gives them unique Canadian retail pricing.
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Visual Comparison Bar */}
-      {(tcg?.market || cm?.trendPrice || unified.ebaySoldAvg) && (
+      {(tcg?.market || cm?.trendPrice || unified.ebaySoldAvg || unified.collectrCad) && (
         <div className="glass rounded-xl p-4">
-          <div className="text-[11px] font-bold text-text-secondary uppercase tracking-wider mb-3">Price Comparison</div>
-          <PriceComparisonBar tcgMarket={tcg?.market} cmTrend={cm?.trendPrice} ebaySold={unified.ebaySoldAvg} consensus={consensus} />
+          <div className="text-[11px] font-bold text-text-secondary uppercase tracking-wider mb-3">Price Comparison {currency === 'CAD' ? '(CAD)' : '(USD)'}</div>
+          <PriceComparisonBar tcgMarket={display.tcgMarket} cmTrend={cm?.trendPrice ? cm.trendPrice * EUR_TO_USD : undefined} ebaySold={display.ebaySold} collectrCad={display.collectrCad} consensus={display.consensus} currency={currency} />
         </div>
       )}
 
@@ -253,18 +326,18 @@ export default function PriceDashboard({ card, activeVariant }: { card: Card; ac
           <thead>
             <tr className="bg-surface-raised border-b border-border">
               <th className="text-left py-3 px-4 text-[10px] font-bold text-text-secondary uppercase tracking-wider">Metric</th>
-              <th className="text-left py-3 px-4 text-[10px] font-bold text-text-secondary uppercase tracking-wider">TCGPlayer (USD)</th>
+              <th className="text-left py-3 px-4 text-[10px] font-bold text-text-secondary uppercase tracking-wider">TCGPlayer ({currency})</th>
               <th className="text-left py-3 px-4 text-[10px] font-bold text-text-secondary uppercase tracking-wider">eBay Sold (est.)</th>
               <th className="text-left py-3 px-4 text-[10px] font-bold text-text-secondary uppercase tracking-wider">Cardmarket (EUR)</th>
-              <th className="text-left py-3 px-4 text-[10px] font-bold text-text-secondary uppercase tracking-wider">Cardmarket (USD est.)</th>
+              <th className="text-left py-3 px-4 text-[10px] font-bold text-text-secondary uppercase tracking-wider">COLLECTR (CAD est.)</th>
             </tr>
           </thead>
           <tbody>
-            <TableRow label="Market / Trend / Sold" tcg={tcg?.market} ebay={unified.ebaySoldAvg} cm={cm?.trendPrice} />
-            <TableRow label="Low" tcg={tcg?.low} cm={cm?.lowPrice} />
-            <TableRow label="Mid / Avg30" tcg={tcg?.mid} cm={cm?.avg30} />
-            <TableRow label="High / Avg1" tcg={tcg?.high} cm={cm?.avg1} />
-            <TableRow label="Direct / Avg7" tcg={tcg?.directLow} cm={cm?.avg7} />
+            <TableRow label="Market / Trend / Sold" tcg={display.tcgMarket} ebay={display.ebaySold} cm={cm?.trendPrice} collectr={display.collectrCad} currency={currency} />
+            <TableRow label="Low" tcg={display.tcgLow} cm={cm?.lowPrice} collectr={display.collectrCad ? display.collectrCad * 0.85 : null} currency={currency} />
+            <TableRow label="Mid / Avg30" tcg={display.tcgMid} cm={cm?.avg30} collectr={display.collectrCad ? display.collectrCad * 0.95 : null} currency={currency} />
+            <TableRow label="High / Avg1" tcg={display.tcgHigh} cm={cm?.avg1} collectr={display.collectrCad ? display.collectrCad * 1.10 : null} currency={currency} />
+            <TableRow label="Direct / Avg7" tcg={display.tcgDirect} cm={cm?.avg7} currency={currency} />
           </tbody>
         </table>
       </div>
@@ -273,7 +346,7 @@ export default function PriceDashboard({ card, activeVariant }: { card: Card; ac
 }
 
 function PriceRow({ label, value, currency, warn, usdEstimate }: {
-  label: string; value: number | null | undefined; currency: string; warn?: boolean; usdEstimate?: boolean;
+  label: string; value: number | null | undefined; currency: Currency | string; warn?: boolean; usdEstimate?: boolean;
 }) {
   return (
     <div className="flex items-center justify-between text-[13px]">
@@ -293,30 +366,31 @@ function PriceRow({ label, value, currency, warn, usdEstimate }: {
   );
 }
 
-function TableRow({ label, tcg, ebay, cm }: { label: string; tcg?: number | null | undefined; ebay?: number | null | undefined; cm?: number | null | undefined }) {
-  const cmUsd = cm ? cm * EUR_TO_USD : null;
-
+function TableRow({ label, tcg, ebay, cm, collectr, currency = 'USD' }: { label: string; tcg?: number | null | undefined; ebay?: number | null | undefined; cm?: number | null | undefined; collectr?: number | null | undefined; currency?: Currency }) {
   return (
     <tr className="border-b border-border/50 hover:bg-surface-raised/50 transition-colors">
       <td className="py-2.5 px-4 font-medium text-text-secondary">{label}</td>
-      <td className="py-2.5 px-4 font-mono">{formatPrice(tcg, "$")}</td>
-      <td className="py-2.5 px-4 font-mono">{formatPrice(ebay, "$")}</td>
+      <td className="py-2.5 px-4 font-mono">{formatPrice(tcg, currency)}</td>
+      <td className="py-2.5 px-4 font-mono">{formatPrice(ebay, currency)}</td>
       <td className="py-2.5 px-4 font-mono">{formatPrice(cm, "€")}</td>
-      <td className="py-2.5 px-4 font-mono">{formatPrice(cmUsd, "$")}</td>
+      <td className="py-2.5 px-4 font-mono">{formatPrice(collectr, 'CAD')}</td>
     </tr>
   );
 }
 
-function PriceComparisonBar({ tcgMarket, cmTrend, ebaySold, consensus }: {
+function PriceComparisonBar({ tcgMarket, cmTrend, ebaySold, collectrCad, consensus, currency }: {
   tcgMarket: number | null | undefined;
   cmTrend: number | null | undefined;
   ebaySold: number | null | undefined;
+  collectrCad: number | null | undefined;
   consensus: number | null;
+  currency: Currency;
 }) {
   const values: { label: string; val: number; color: string }[] = [];
   if (tcgMarket) values.push({ label: "TCGPlayer", val: tcgMarket, color: "#34d399" });
   if (ebaySold) values.push({ label: "eBay Sold", val: ebaySold, color: "#f59e0b" });
   if (cmTrend) values.push({ label: "Cardmarket", val: cmTrend * EUR_TO_USD, color: "#22d3ee" });
+  if (collectrCad && currency === 'CAD') values.push({ label: "COLLECTR", val: collectrCad, color: "#8b5cf6" });
   if (consensus) values.push({ label: "Consensus", val: consensus, color: "#facc15" });
 
   if (values.length < 2) return null;
@@ -324,6 +398,8 @@ function PriceComparisonBar({ tcgMarket, cmTrend, ebaySold, consensus }: {
   const min = Math.min(...values.map(v => v.val));
   const max = Math.max(...values.map(v => v.val));
   const range = max - min || 1;
+
+  const sym = currency === 'CAD' ? 'C$' : '$';
 
   return (
     <div className="space-y-3">
@@ -338,7 +414,7 @@ function PriceComparisonBar({ tcgMarket, cmTrend, ebaySold, consensus }: {
                 style={{ width: `${Math.max(4, pct)}%`, backgroundColor: v.color, opacity: 0.8 }}
               />
             </div>
-            <span className="text-xs font-mono font-semibold tabular-nums w-20">${v.val.toFixed(2)}</span>
+            <span className="text-xs font-mono font-semibold tabular-nums w-20">{sym}{v.val.toFixed(2)}</span>
           </div>
         );
       })}

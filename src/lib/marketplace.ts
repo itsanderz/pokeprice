@@ -160,3 +160,29 @@ export function estimateEbaySoldGraded(tcgplayerMarket: number | null, grade?: s
   // Raw / ungraded
   return tcgplayerMarket * 0.92;
 }
+
+/* ═══════════════════════════════════════
+   COLLECTR (CAD) REFERENCE
+   ═══════════════════════════════════════
+   
+   COLLECTR has an exclusive partnership with EB Games (Canada's largest
+   game retailer). They provide Canadian pricing data that differs from
+   TCGPlayer USD due to:
+   - CAD/USD exchange rate
+   - Canadian import duties and distribution costs
+   - EB Games retail markup vs. US market rates
+   - Regional scarcity (some products never officially released in Canada)
+   
+   Until COLLECTR opens a public API:
+   - We derive CAD estimates from TCGPlayer USD using market exchange rates
+   - Label clearly as "estimate" so users know it's not direct COLLECTR data
+   - When API becomes available, replace estimate with real fetch
+*/
+
+export const COLLECTR_CONTEXT = {
+  name: 'COLLECTR',
+  region: 'Canada',
+  partner: 'EB Games',
+  currency: 'CAD',
+  notes: 'Estimated from USD sources until COLLECTR API available. EB Games partnership gives them unique Canadian retail pricing data.',
+};
