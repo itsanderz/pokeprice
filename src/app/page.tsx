@@ -11,6 +11,7 @@ import {
   IconClipboard,
   IconGlobe,
   IconInfo,
+  IconMenu,
   IconPackage,
   IconPen,
   IconPokeball,
@@ -20,7 +21,9 @@ import {
   IconTrendDown,
   IconTrendUp,
   IconWallet,
+  IconX,
 } from "./components/Icons";
+import LegacyPokePrice from "./components/LegacyPokePrice";
 
 type Currency = "CAD" | "USD";
 type TimeRange = "7D" | "1M" | "3M" | "6M" | "1Y" | "ALL";
@@ -42,6 +45,8 @@ type HoldingsRow = {
   marketValue: number;
 };
 
+type LegacySurface = "search" | "watchlist" | "collection" | "sealed" | "stories" | "grading";
+
 const NAV_ITEMS = [
   { label: "Dashboard", icon: IconChartBar, active: true },
   { label: "Search Cards", icon: IconSearch },
@@ -55,6 +60,22 @@ const NAV_ITEMS = [
 
 const ANALYTICS_ITEMS = ["Price Comparer", "Market Trends"];
 const ACCOUNT_ITEMS = ["Reports", "Export (CSV)", "Settings"];
+
+const DASHBOARD_SURFACE_MAP: Partial<Record<(typeof NAV_ITEMS)[number]["label"], LegacySurface>> = {
+  "Search Cards": "search",
+  Collection: "collection",
+  Watchlist: "watchlist",
+  "Sealed Vault": "sealed",
+  "Grading Tracker": "grading",
+  "Card Stories": "stories",
+};
+
+const MOBILE_PRIMARY_ACTIONS: { label: string; surface: LegacySurface; icon: typeof IconSearch }[] = [
+  { label: "Search", surface: "search", icon: IconSearch },
+  { label: "Collection", surface: "collection", icon: IconClipboard },
+  { label: "Watchlist", surface: "watchlist", icon: IconStar },
+  { label: "Sealed", surface: "sealed", icon: IconPackage },
+];
 
 const PORTFOLIO_SERIES: Record<TimeRange, SparkPoint[]> = {
   "7D": [
@@ -434,6 +455,27 @@ function SectionCard({ children, className = "" }: { children: React.ReactNode; 
 export default function Home() {
   const [currency, setCurrency] = useState<Currency>("CAD");
   const [range, setRange] = useState<TimeRange>("1M");
+  const [surface, setSurface] = useState<"dashboard" | LegacySurface>("dashboard");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
+  const openSurface = (nextSurface: LegacySurface, params?: { q?: string; card?: string }) => {
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("q");
+      url.searchParams.delete("card");
+      if (params?.q) url.searchParams.set("q", params.q);
+      if (params?.card) url.searchParams.set("card", params.card);
+      window.history.replaceState({}, "", url);
+    }
+    setMobileNavOpen(false);
+    setSurface(nextSurface);
+  };
+
+  const handleDashboardNav = (label: (typeof NAV_ITEMS)[number]["label"]) => {
+    const target = DASHBOARD_SURFACE_MAP[label];
+    if (target) openSurface(target);
+  };
 
   const holdings = useMemo(() => {
     return HOLDINGS.map((row) => {
@@ -450,6 +492,28 @@ export default function Home() {
     totalInvested: 14213.11,
     roi: 74.66,
   };
+
+  if (surface !== "dashboard") {
+    return (
+      <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(124,58,237,0.12),transparent_32%),radial-gradient(circle_at_top_right,rgba(14,165,233,0.08),transparent_28%),linear-gradient(180deg,#040813_0%,#07101d_100%)] text-white">
+        <div className="mx-auto max-w-[1600px] px-4 py-4 sm:px-6 xl:px-8">
+          <div className="mb-4 flex items-center justify-between rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3">
+            <div>
+              <div className="text-sm font-medium text-white">Interactive surface restored</div>
+              <div className="text-xs text-slate-400">Using the working app flows while the dashboard shell is being fully rewired.</div>
+            </div>
+            <button
+              className="rounded-xl border border-white/8 bg-[#0d1628] px-4 py-2 text-sm font-medium text-slate-200 hover:bg-white/[0.05]"
+              onClick={() => setSurface("dashboard")}
+            >
+              Back to dashboard
+            </button>
+          </div>
+        </div>
+        <LegacyPokePrice initialView={surface} />
+      </main>
+    );
+  }
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(124,58,237,0.12),transparent_32%),radial-gradient(circle_at_top_right,rgba(14,165,233,0.08),transparent_28%),linear-gradient(180deg,#040813_0%,#07101d_100%)] text-white">
@@ -473,6 +537,7 @@ export default function Home() {
               return (
                 <button
                   key={item.label}
+                  onClick={() => handleDashboardNav(item.label)}
                   className={`flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-[15px] transition ${
                     ("active" in item && item.active)
                       ? "bg-[linear-gradient(90deg,rgba(124,58,237,0.95),rgba(168,85,247,0.82))] text-white shadow-[0_10px_32px_rgba(124,58,237,0.35)]"
@@ -491,7 +556,7 @@ export default function Home() {
               <div className="mb-3 px-2 text-xs uppercase tracking-[0.18em] text-slate-500">Analytics</div>
               <div className="space-y-1">
                 {ANALYTICS_ITEMS.map((item) => (
-                  <button key={item} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-slate-300 hover:bg-white/4 hover:text-white">
+                  <button key={item} onClick={() => openSurface("search")} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-slate-300 hover:bg-white/4 hover:text-white">
                     <IconChartLine className="h-4 w-4" />
                     {item}
                   </button>
@@ -503,7 +568,7 @@ export default function Home() {
               <div className="mb-3 px-2 text-xs uppercase tracking-[0.18em] text-slate-500">Account</div>
               <div className="space-y-1">
                 {ACCOUNT_ITEMS.map((item) => (
-                  <button key={item} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-slate-300 hover:bg-white/4 hover:text-white">
+                  <button key={item} onClick={() => openSurface("collection")} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-slate-300 hover:bg-white/4 hover:text-white">
                     <IconClipboard className="h-4 w-4" />
                     {item}
                   </button>
@@ -557,12 +622,83 @@ export default function Home() {
 
         <div className="flex min-w-0 flex-1 flex-col">
           <header className="sticky top-0 z-20 border-b border-white/6 bg-[#07101dcc]/80 px-4 py-4 backdrop-blur-xl sm:px-6 xl:px-8">
+            <div className="mb-4 flex items-center justify-between gap-3 lg:hidden">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-white text-black shadow-[0_0_0_6px_rgba(239,68,68,0.12)]">
+                  <IconPokeball className="h-7 w-7 text-rose-500" />
+                </div>
+                <div className="min-w-0">
+                  <div className="truncate text-[15px] font-semibold tracking-tight text-white">
+                    Poke<span className="text-violet-400">Price</span>
+                  </div>
+                  <div className="truncate text-xs text-slate-400">Truth in every price.</div>
+                </div>
+              </div>
+              <button
+                className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-white/8 bg-[#0d1628] text-slate-200"
+                onClick={() => setMobileNavOpen((prev) => !prev)}
+                aria-label={mobileNavOpen ? "Close navigation" : "Open navigation"}
+              >
+                {mobileNavOpen ? <IconX className="h-5 w-5" /> : <IconMenu className="h-5 w-5" />}
+              </button>
+            </div>
+
+            {mobileNavOpen && (
+              <div className="mb-4 rounded-[28px] border border-white/8 bg-[#0b1424]/96 p-3 shadow-[0_24px_64px_rgba(0,0,0,0.35)] lg:hidden">
+                <div className="grid grid-cols-2 gap-2">
+                  {NAV_ITEMS.map((item) => {
+                    const Icon = item.icon;
+                    const isActive = item.label === "Dashboard";
+                    return (
+                      <button
+                        key={item.label}
+                        onClick={() => {
+                          if (isActive) {
+                            setMobileNavOpen(false);
+                            return;
+                          }
+                          handleDashboardNav(item.label);
+                        }}
+                        className={`flex items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm transition ${
+                          isActive
+                            ? "bg-[linear-gradient(90deg,rgba(124,58,237,0.95),rgba(168,85,247,0.82))] text-white shadow-[0_10px_28px_rgba(124,58,237,0.28)]"
+                            : "bg-white/[0.03] text-slate-200 hover:bg-white/[0.06]"
+                        }`}
+                      >
+                        <Icon className="h-4 w-4 shrink-0" />
+                        <span className="min-w-0 truncate">{item.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  {[...ANALYTICS_ITEMS, ...ACCOUNT_ITEMS].map((item) => (
+                    <button
+                      key={item}
+                      onClick={() => openSurface(item === "Price Comparer" || item === "Market Trends" ? "search" : "collection")}
+                      className="flex items-center gap-3 rounded-2xl border border-white/8 bg-white/[0.03] px-3 py-3 text-left text-sm text-slate-300"
+                    >
+                      {item === "Price Comparer" || item === "Market Trends" ? <IconChartLine className="h-4 w-4" /> : <IconClipboard className="h-4 w-4" />}
+                      <span className="truncate">{item}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
               <div className="flex flex-1 items-center gap-3 rounded-2xl border border-white/8 bg-[#0d1628]/90 px-4 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] xl:max-w-[700px]">
                 <IconSearch className="h-5 w-5 text-slate-400" />
                 <input
                   className="min-w-0 flex-1 bg-transparent text-[15px] text-white outline-none placeholder:text-slate-500"
-                  defaultValue=""
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && searchQuery.trim().length >= 2) {
+                      openSurface("search", { q: searchQuery.trim() });
+                    }
+                  }}
                   placeholder="Search Pokémon cards, sets, TG/SVP, keywords..."
                 />
                 <div className="hidden items-center gap-2 rounded-xl border border-white/8 bg-white/[0.03] px-2.5 py-1 text-xs text-slate-400 sm:flex">
@@ -580,12 +716,12 @@ export default function Home() {
                   <IconChevronDown className="h-4 w-4 text-slate-500" />
                 </button>
 
-                <button className="relative grid h-12 w-12 place-items-center rounded-2xl border border-white/8 bg-[#0d1628] text-slate-300">
+                <button className="relative grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-white/8 bg-[#0d1628] text-slate-300">
                   <IconBell className="h-5 w-5" />
                   <span className="absolute right-2 top-2 grid h-5 w-5 place-items-center rounded-full bg-violet-500 text-[11px] font-semibold text-white">3</span>
                 </button>
 
-                <button className="flex items-center gap-2 rounded-2xl border border-white/8 bg-[#0d1628] px-2 py-2 text-sm text-slate-200">
+                <button className="hidden items-center gap-2 rounded-2xl border border-white/8 bg-[#0d1628] px-2 py-2 text-sm text-slate-200 sm:flex">
                   <img
                     alt="Profile avatar"
                     className="h-8 w-8 rounded-full border border-violet-500/40 object-cover"
@@ -600,12 +736,45 @@ export default function Home() {
           <div className="flex-1 px-4 py-5 sm:px-6 xl:px-8">
             <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_280px]">
               <div className="min-w-0 space-y-6">
+                <SectionCard className="p-4 lg:hidden">
+                  <div className="mb-4 flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-medium text-white">Quick access</div>
+                      <div className="text-xs text-slate-400">Jump into the interactive flows from mobile.</div>
+                    </div>
+                    <button
+                      onClick={() => openSurface("search", searchQuery.trim().length >= 2 ? { q: searchQuery.trim() } : undefined)}
+                      className="rounded-xl border border-violet-400/30 bg-violet-500/12 px-3 py-2 text-xs font-medium text-violet-200"
+                    >
+                      Open search
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    {MOBILE_PRIMARY_ACTIONS.map((action) => {
+                      const Icon = action.icon;
+                      return (
+                        <button
+                          key={action.label}
+                          onClick={() => openSurface(action.surface, action.surface === "search" && searchQuery.trim().length >= 2 ? { q: searchQuery.trim() } : undefined)}
+                          className="rounded-2xl border border-white/8 bg-white/[0.03] p-4 text-left"
+                        >
+                          <div className="mb-3 grid h-10 w-10 place-items-center rounded-2xl bg-violet-500/18 text-violet-300">
+                            <Icon className="h-5 w-5" />
+                          </div>
+                          <div className="text-sm font-medium text-white">{action.label}</div>
+                          <div className="mt-1 text-xs text-slate-400">Open the live {action.label.toLowerCase()} experience.</div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </SectionCard>
+
                 <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                   <div>
-                    <h1 className="text-4xl font-semibold tracking-tight text-white">Welcome back, Trainer! 👋</h1>
-                    <p className="mt-2 text-lg text-slate-400">Here&apos;s what&apos;s happening with your collection.</p>
+                    <h1 className="text-[2rem] font-semibold tracking-tight text-white sm:text-4xl">Welcome back, Trainer! 👋</h1>
+                    <p className="mt-2 text-base text-slate-400 sm:text-lg">Here&apos;s what&apos;s happening with your collection.</p>
                   </div>
-                  <div className="flex items-center gap-3 self-start">
+                  <div className="flex flex-wrap items-center gap-3 self-start">
                     <div className="flex items-center gap-2 text-sm text-slate-400">
                       <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
                       Prices updated 2m ago
@@ -661,7 +830,7 @@ export default function Home() {
                   <SectionCard className="p-5">
                     <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                       <div className="flex items-center gap-2">
-                        <h2 className="text-[1.75rem] font-semibold tracking-tight">Portfolio Value Over Time</h2>
+                        <h2 className="text-[1.4rem] font-semibold tracking-tight sm:text-[1.75rem]">Portfolio Value Over Time</h2>
                         <IconInfo className="h-4 w-4 text-slate-500" />
                       </div>
                       <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/8 bg-white/[0.03] p-1.5">
@@ -702,7 +871,7 @@ export default function Home() {
                         </div>
                       ))}
                     </div>
-                    <button className="mt-6 flex items-center gap-2 text-sm font-medium text-violet-300 hover:text-violet-200">
+                    <button onClick={() => openSurface("search")} className="mt-6 flex items-center gap-2 text-sm font-medium text-violet-300 hover:text-violet-200">
                       Learn more about our pricing methodology <IconChevronRight className="h-4 w-4" />
                     </button>
                   </SectionCard>
@@ -711,10 +880,10 @@ export default function Home() {
                 <SectionCard className="overflow-hidden p-5">
                   <div className="mb-4 flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
                     <div>
-                      <h2 className="text-[1.75rem] font-semibold tracking-tight">Top Collection Holdings</h2>
+                      <h2 className="text-[1.4rem] font-semibold tracking-tight sm:text-[1.75rem]">Top Collection Holdings</h2>
                     </div>
                     <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
-                      <div className="grid gap-3 sm:grid-cols-4">
+                      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                         {[
                           "All Sets",
                           "All Conditions",
@@ -737,7 +906,34 @@ export default function Home() {
                     </div>
                   </div>
 
-                  <div className="overflow-x-auto">
+                  <div className="space-y-3 lg:hidden">
+                    {holdings.map((row) => (
+                      <div key={`${row.id}-mobile`} className="rounded-2xl border border-white/8 bg-white/[0.03] p-4">
+                        <div className="flex items-start gap-3">
+                          <img alt={row.name} src={row.image} className="h-16 w-16 rounded-xl border border-white/8 object-cover" />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="truncate font-medium text-white">{row.name}</div>
+                                <div className="truncate text-sm text-slate-400">{row.set} • {row.number}</div>
+                              </div>
+                              <ConditionPill condition={row.condition} />
+                            </div>
+                            <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                              <MobileHoldingMetric label="Qty" value={String(row.qty)} />
+                              <MobileHoldingMetric label="ROI" value={`+${row.roi.toFixed(1)}%`} valueClassName="text-emerald-400" />
+                              <MobileHoldingMetric label="Cost basis" value={formatMoney(row.costBasis, currency)} />
+                              <MobileHoldingMetric label="Market" value={formatMoney(row.marketValue, currency)} />
+                              <MobileHoldingMetric label="Invested" value={formatMoney(row.totalInvested, currency)} />
+                              <MobileHoldingMetric label="Total value" value={formatMoney(row.totalValue, currency)} />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="hidden overflow-x-auto lg:block">
                     <table className="min-w-full border-separate border-spacing-y-2 text-left text-sm">
                       <thead>
                         <tr className="text-xs uppercase tracking-[0.16em] text-slate-500">
@@ -780,7 +976,7 @@ export default function Home() {
                     </table>
                   </div>
 
-                  <button className="mt-4 flex items-center gap-2 text-sm font-medium text-violet-300 hover:text-violet-200">
+                  <button onClick={() => openSurface("collection")} className="mt-4 flex items-center gap-2 text-sm font-medium text-violet-300 hover:text-violet-200">
                     View full collection <IconChevronRight className="h-4 w-4" />
                   </button>
                 </SectionCard>
@@ -791,7 +987,10 @@ export default function Home() {
                       <div className="mb-4 text-4xl leading-none">{feature.icon}</div>
                       <div className="text-xl font-semibold tracking-tight text-white">{feature.title}</div>
                       <p className="mt-2 min-h-[48px] text-sm leading-6 text-slate-400">{feature.desc}</p>
-                      <button className="mt-4 flex items-center gap-2 text-sm font-medium text-violet-300 hover:text-violet-200">
+                      <button
+                        onClick={() => openSurface(feature.title === "Market Trends" ? "search" : feature.title === "Price Alerts" ? "watchlist" : feature.title === "Card Stories" ? "stories" : feature.title === "Grading Tracker" ? "grading" : "sealed")}
+                        className="mt-4 flex items-center gap-2 text-sm font-medium text-violet-300 hover:text-violet-200"
+                      >
                         {feature.cta} <IconChevronRight className="h-4 w-4" />
                       </button>
                     </SectionCard>
@@ -802,8 +1001,8 @@ export default function Home() {
               <aside className="space-y-5">
                 <SectionCard className="p-5">
                   <div className="mb-5 flex items-center justify-between gap-3">
-                    <h2 className="text-[1.65rem] font-semibold tracking-tight">Watchlist (4)</h2>
-                    <button className="text-sm font-medium text-violet-300 hover:text-violet-200">View all</button>
+                    <h2 className="text-[1.4rem] font-semibold tracking-tight sm:text-[1.65rem]">Watchlist (4)</h2>
+                    <button onClick={() => openSurface("watchlist")} className="text-sm font-medium text-violet-300 hover:text-violet-200">View all</button>
                   </div>
                   <div className="space-y-4">
                     {WATCHLIST.map((item) => (
@@ -820,14 +1019,14 @@ export default function Home() {
                       </div>
                     ))}
                   </div>
-                  <button className="mt-5 flex items-center gap-2 text-sm font-medium text-violet-300 hover:text-violet-200">
+                  <button onClick={() => openSurface("watchlist")} className="mt-5 flex items-center gap-2 text-sm font-medium text-violet-300 hover:text-violet-200">
                     Go to Watchlist <IconChevronRight className="h-4 w-4" />
                   </button>
                 </SectionCard>
 
                 <SectionCard className="p-5">
                   <div className="mb-5 flex items-center justify-between gap-3">
-                    <h2 className="text-[1.65rem] font-semibold tracking-tight">Alerts</h2>
+                    <h2 className="text-[1.4rem] font-semibold tracking-tight sm:text-[1.65rem]">Alerts</h2>
                     <button className="text-sm font-medium text-violet-300 hover:text-violet-200">View all</button>
                   </div>
                   <div className="space-y-4">
@@ -863,7 +1062,7 @@ export default function Home() {
 
                 <SectionCard className="p-5">
                   <div className="mb-5 flex items-center justify-between gap-3">
-                    <h2 className="text-[1.65rem] font-semibold tracking-tight">Recent Activity</h2>
+                    <h2 className="text-[1.4rem] font-semibold tracking-tight sm:text-[1.65rem]">Recent Activity</h2>
                     <button className="text-sm font-medium text-violet-300 hover:text-violet-200">View all</button>
                   </div>
                   <div className="space-y-4">
@@ -928,6 +1127,23 @@ function MetricCard({
         <MiniSparkline values={spark} />
       </div>
     </SectionCard>
+  );
+}
+
+function MobileHoldingMetric({
+  label,
+  value,
+  valueClassName = "text-white",
+}: {
+  label: string;
+  value: string;
+  valueClassName?: string;
+}) {
+  return (
+    <div className="rounded-xl border border-white/6 bg-[#0b1424] px-3 py-2.5">
+      <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500">{label}</div>
+      <div className={`mt-1 text-sm font-medium ${valueClassName}`}>{value}</div>
+    </div>
   );
 }
 
